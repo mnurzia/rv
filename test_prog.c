@@ -1,13 +1,11 @@
 typedef int size_t;
 
-size_t strlen(const char* s) {
+size_t rv_strlen(const char *s) {
   size_t sz = 0;
-  while (*s) {
+  while (*(s++)) {
     sz++;
   }
   return sz;
 }
 
-int rv_main(void) {
-  return strlen("abcdef");
-}
+int rv_main(void) { return rv_strlen("abcdef"); }

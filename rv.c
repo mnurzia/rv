@@ -68,10 +68,10 @@ void rv_sh(rv *cpu, rv_u32 addr, rv_u32 data) {
 
 void rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
   rv_sh(cpu, addr, data & 0xFFFF);
-  rv_sh(cpu, addr, data >> 16);
+  rv_sh(cpu, addr + 2, data >> 16);
 }
 
-#define rv_signext(b, l) ((0 - (b)) << l)
+rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
 #define rv_ibf(i, h, l) (((i) >> (l)) & ((1 << (h - l + 1)) - 1))
 #define rv_ib(i, l) rv_ibf(i, l, l)
@@ -81,13 +81,14 @@ void rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
 #define rv_ird(i) rv_ibf(i, 11, 7)
 #define rv_irs1(i) rv_ibf(i, 19, 15)
 #define rv_irs2(i) rv_ibf(i, 24, 20)
-#define rv_iimm_i(i) (rv_signext(rv_ib(i, 31), 11) | rv_ibf(i, 30, 20))
+#define rv_iimm_i(i) rv_signext(rv_ibf(i, 31, 20), 11)
 #define rv_iimm_s(i)                                                           \
-  (rv_signext(rv_ib(i, 31), 11) | rv_ibf(i, 30, 25) << 5 | rv_ibf(i, 11, 7))
+  (rv_signext(rv_ibf(i, 31, 25), 6) << 5 | rv_ibf(i, 30, 25) << 5 |            \
+   rv_ibf(i, 11, 7))
 #define rv_iimm_u(i) (rv_ibf(i, 31, 12) << 12)
 #define rv_isz(i) (rv_ibf(i, 1, 0) + 1)
 #define rv_ij(i)                                                               \
-  (rv_signext(rv_ib(i, 31), 20) | rv_ibf(i, 19, 12) << 12 |                    \
+  (rv_signext(rv_ib(i, 31), 0) << 20 | rv_ibf(i, 19, 12) << 12 |               \
    rv_ib(i, 20) << 11 | rv_ibf(i, 30, 21) << 1)
 
 #define unimp() (rv_dump(cpu), assert(0 == "unimplemented instruction"))
@@ -104,14 +105,29 @@ int rv_inst(rv *cpu) {
   rv_u32 i = rv_lw(cpu, cpu->ip);
   rv_u32 next_ip = cpu->ip + rv_isz(i);
   if (rv_iopl(i) == 0) {
-    if (rv_ioph(i) == 1) { /* 01/000: STORE */
+    if (rv_ioph(i) == 0) { /* 00/000: LOAD */
+      rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
+      if (rv_if3(i) == 0) { /* lb */
+        rv_sr(cpu, rv_ird(i), rv_signext(rv_lb(cpu, addr), 7));
+      } else if (rv_if3(i) == 1) { /* lh */
+        rv_sr(cpu, rv_ird(i), rv_signext(rv_lh(cpu, addr), 15));
+      } else if (rv_if3(i) == 2) { /* lw */
+        rv_sr(cpu, rv_ird(i), rv_lw(cpu, addr));
+      } else if (rv_if3(i) == 4) { /* lbu */
+        rv_sr(cpu, rv_ird(i), rv_lb(cpu, addr));
+      } else if (rv_if3(i) == 5) { /* lhu */
+        rv_sr(cpu, rv_ird(i), rv_lh(cpu, addr));
+      } else {
+        unimp();
+      }
+    } else if (rv_ioph(i) == 1) { /* 01/000: STORE */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_s(i);
-      if (rv_if3(i) == 0) { /* sw */
-        rv_sw(cpu, addr, rv_irs2(i));
+      if (rv_if3(i) == 0) { /* sb */
+        rv_sb(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFF);
       } else if (rv_if3(i) == 1) { /* sh */
-        rv_sh(cpu, addr, rv_irs2(i) & 0xFFFF);
-      } else if (rv_if3(i) == 2) { /* sb */
-        rv_sb(cpu, addr, rv_irs2(i) & 0xFF);
+        rv_sh(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFFFF);
+      } else if (rv_if3(i) == 2) { /* sw */
+        rv_sw(cpu, addr, rv_lr(cpu, rv_irs2(i)));
       } else {
         unimp();
       }
@@ -119,8 +135,7 @@ int rv_inst(rv *cpu) {
       unimp();
     }
   } else if (rv_iopl(i) == 3) {
-    if (rv_ioph(i) == 3) { /* 11/011: JAL */
-      printf("ij %08X %08X\n", rv_ij(i), cpu->ip + rv_ij(i));
+    if (rv_ioph(i) == 3) {            /* 11/011: JAL */
       rv_sr(cpu, rv_ird(i), next_ip); /* jal */
       next_ip = cpu->ip + rv_ij(i);
     } else {
