@@ -38,11 +38,14 @@ void rv_dump(rv *cpu) {
 }
 
 rv_u8 load_cb(void *user, rv_u32 addr) {
+  printf("(L) %08X", addr);
   assert(addr >= 0x200 && addr < 0x10000);
+  printf("-> %02X\n", ((rv_u8 *)user)[addr]);
   return ((rv_u8 *)user)[addr];
 }
 
 void store_cb(void *user, rv_u32 addr, rv_u8 data) {
+  printf("(S) %08X <- %02X\n", addr, data);
   assert(addr >= 0x200 && addr < 0x10000);
   ((rv_u8 *)user)[addr] = data;
 }
@@ -93,8 +96,8 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
    rv_ibf(i, 11, 7))
 #define rv_iimm_u(i) (rv_ibf(i, 31, 12) << 12)
 #define rv_iimm_b(i)                                                           \
-  (rv_signext(i, 31) << 12 | rv_ib(i, 7) << 11 | rv_ibf(i, 30, 25) << 5 |      \
-   rv_ibf(i, 11, 8) << 1)
+  (rv_signext(rv_ib(i, 31), 0) << 12 | rv_ib(i, 7) << 11 |                     \
+   rv_ibf(i, 30, 25) << 5 | rv_ibf(i, 11, 8) << 1)
 #define rv_iimm_j(i)                                                           \
   (rv_signext(rv_ib(i, 31), 0) << 20 | rv_ibf(i, 19, 12) << 12 |               \
    rv_ib(i, 20) << 11 | rv_ibf(i, 30, 21) << 1)
@@ -143,8 +146,9 @@ int rv_inst(rv *cpu) {
     } else if (rv_ioph(i) == 3) { /* 11/000: BRANCH */
       rv_u32 a = rv_lr(cpu, rv_irs1(i)), b = rv_lr(cpu, rv_irs2(i));
       rv_u32 y = a - b;
-      rv_u32 zero = !!y, sgn = rv_sgn(y), ovf = rv_ovf(a, b, y), carry = y > a;
-      rv_u32 targ = cpu->ip + rv_iimm_b(i);
+      rv_u32 zero = !y, sgn = rv_sgn(y), ovf = rv_ovf(a, b, y), carry = y > a;
+      rv_u32 add = rv_iimm_b(i);
+      rv_u32 targ = cpu->ip + add;
       if ((rv_if3(i) == 0 && zero) ||         /* beq */
           (rv_if3(i) == 1 && !zero) ||        /* bne */
           (rv_if3(i) == 4 && (sgn != ovf)) || /* blt */
@@ -156,6 +160,13 @@ int rv_inst(rv *cpu) {
       } else if (rv_if3(i) == 2 || rv_if3(i) == 3) {
         unimp();
       }
+    } else {
+      unimp();
+    }
+  } else if (rv_iopl(i) == 1) {
+    if (rv_ioph(i) == 3 && rv_if3(i) == 0) { /* 11/001: JALR */
+      rv_sr(cpu, rv_ird(i), next_ip);        /* jalr */
+      next_ip = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
     } else {
       unimp();
     }
