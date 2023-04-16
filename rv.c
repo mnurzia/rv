@@ -184,6 +184,10 @@ int rv_inst(rv *cpu) {
       } else {
         unimp();
       }
+    } else if (rv_ioph(i) == 1) { /* 01/100: OP */
+      if (rv_if3(i) == 0) {       /* add */
+        rv_sr(cpu, rv_ird(i), rv_lr(cpu, rv_irs1(i)) + rv_lr(cpu, rv_irs2(i)));
+      }
     } else {
       unimp();
     }

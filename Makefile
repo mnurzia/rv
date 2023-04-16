@@ -9,7 +9,7 @@ bin:
 	mkdir bin
 
 bin/test_prog.o: bin test_prog.c rt.s link.ld
-	$(RVCC) -nostdlib -nostartfiles -Tlink.ld -march=rv32i -mabi=ilp32 -o bin/test_prog.o test_prog.c rt.s -e _start
+	$(RVCC) -nostdlib -nostartfiles -Tlink.ld -march=rv32i -mabi=ilp32 -o bin/test_prog.o test_prog.c rt.s -e _start -O
 
 bin/test_prog.bin: bin bin/test_prog.o
 	$(RVOC) -O binary bin/test_prog.o bin/test_prog.bin
