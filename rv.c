@@ -73,6 +73,12 @@ void rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
 
 rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
+#define RV_SBIT 0x80000000
+#define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT))
+#define rv_ovf(a, b, y)                                                        \
+  ((!((a)&RV_SBIT) && !((b)&RV_SBIT) && !!((y)&RV_SBIT)) ||                    \
+   (!!((a)&RV_SBIT) && !!((b)&RV_SBIT) && !!((y)&RV_SBIT)))
+
 #define rv_ibf(i, h, l) (((i) >> (l)) & ((1 << (h - l + 1)) - 1))
 #define rv_ib(i, l) rv_ibf(i, l, l)
 #define rv_ioph(i) rv_ibf(i, 6, 5)
@@ -86,10 +92,13 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
   (rv_signext(rv_ibf(i, 31, 25), 6) << 5 | rv_ibf(i, 30, 25) << 5 |            \
    rv_ibf(i, 11, 7))
 #define rv_iimm_u(i) (rv_ibf(i, 31, 12) << 12)
-#define rv_isz(i) (rv_ibf(i, 1, 0) + 1)
-#define rv_ij(i)                                                               \
+#define rv_iimm_b(i)                                                           \
+  (rv_signext(i, 31) << 12 | rv_ib(i, 7) << 11 | rv_ibf(i, 30, 25) << 5 |      \
+   rv_ibf(i, 11, 8) << 1)
+#define rv_iimm_j(i)                                                           \
   (rv_signext(rv_ib(i, 31), 0) << 20 | rv_ibf(i, 19, 12) << 12 |               \
    rv_ib(i, 20) << 11 | rv_ibf(i, 30, 21) << 1)
+#define rv_isz(i) (rv_ibf(i, 1, 0) + 1)
 
 #define unimp() (rv_dump(cpu), assert(0 == "unimplemented instruction"))
 
@@ -131,13 +140,29 @@ int rv_inst(rv *cpu) {
       } else {
         unimp();
       }
+    } else if (rv_ioph(i) == 3) { /* 11/000: BRANCH */
+      rv_u32 a = rv_lr(cpu, rv_irs1(i)), b = rv_lr(cpu, rv_irs2(i));
+      rv_u32 y = a - b;
+      rv_u32 zero = !!y, sgn = rv_sgn(y), ovf = rv_ovf(a, b, y), carry = y > a;
+      rv_u32 targ = cpu->ip + rv_iimm_b(i);
+      if ((rv_if3(i) == 0 && zero) ||         /* beq */
+          (rv_if3(i) == 1 && !zero) ||        /* bne */
+          (rv_if3(i) == 4 && (sgn != ovf)) || /* blt */
+          (rv_if3(i) == 5 && (sgn == ovf)) || /* bge */
+          (rv_if3(i) == 6 && carry) ||        /* bltu */
+          (rv_if3(i) == 7 && !carry)          /* bgtu */
+      ) {
+        next_ip = targ;
+      } else if (rv_if3(i) == 2 || rv_if3(i) == 3) {
+        unimp();
+      }
     } else {
       unimp();
     }
   } else if (rv_iopl(i) == 3) {
     if (rv_ioph(i) == 3) {            /* 11/011: JAL */
       rv_sr(cpu, rv_ird(i), next_ip); /* jal */
-      next_ip = cpu->ip + rv_ij(i);
+      next_ip = cpu->ip + rv_iimm_j(i);
     } else {
       unimp();
     }
