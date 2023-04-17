@@ -217,7 +217,7 @@ rv_u32 rv_except(rv *cpu, rv_u32 cause) {
   (void)cpu;
   printf("(E) %04X\n", cause);
   cpu->ip = (cpu->csrs.mtvec & (rv_u32)~1) + 4 * cause * (cpu->csrs.mtvec & 1);
-  return cause;
+  return cause + 1;
 }
 
 rv_u32 rv_inst(rv *cpu) {
@@ -350,9 +350,22 @@ rv_u32 rv_inst(rv *cpu) {
         rv_sr(cpu, rv_ird(i), (rv_u32)res);
         if (rv_irs1(i) && rv_isbad(rv_scsr(cpu, csr, (rv_u32)res & ~s)))
           return rv_except(cpu, RV_EILL);
-      } else if (!rv_if3(i) && !rv_ird(i) && !rv_irs1(i) && rv_irs2(i) == 2 &&
-                 rv_if7(i) == 24) { /* mret */
-        next_ip = cpu->csrs.mepc;
+      } else if (!rv_if3(i)) {
+        if (!rv_ird(i)) {
+          if (!rv_irs1(i) && rv_irs2(i) == 2 && rv_if7(i) == 24) { /* mret */
+            next_ip = cpu->csrs.mepc;
+          } else if (!rv_irs1(i) && !rv_irs2(i) && !rv_if7(i)) { /* ecall */
+            printf("(ECALL) ");
+            if (rv_lr(cpu, 17) == 93) {
+              printf("PASS!\n");
+              return 0;
+            }
+          } else {
+            unimp();
+          }
+        } else {
+          unimp();
+        }
       } else {
         unimp();
       }
@@ -371,7 +384,7 @@ rv_u32 rv_inst(rv *cpu) {
     unimp();
   }
   cpu->ip = next_ip;
-  return 0;
+  return 1;
 }
 
 int main(int argc, const char **argv) {
@@ -385,7 +398,6 @@ int main(int argc, const char **argv) {
   memset(mem, 0, 0x10000);
   read(fd, mem, 0x10000);
   rv_init(&cpu, (void *)mem, &load_cb, &store_cb);
-  while (1) {
-    rv_inst(&cpu);
+  while (rv_inst(&cpu)) {
   }
 }
