@@ -13,13 +13,17 @@ typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr);
 typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
 
 typedef struct rv_csrs {
-  rv_u32 mnscratch;
-  rv_u32 mnepc;
-  rv_u32 mncause;
-  rv_u32 mnstatus;
+  rv_u32 mstatus;
+  rv_u32 mstatush;
+  rv_u32 mscratch;
+  rv_u32 mepc;
+  rv_u32 mcause;
+  rv_u32 mtval;
+  rv_u32 mip;
+  rv_u32 mtinst;
+  rv_u32 mtval2;
   rv_u32 mtvec;
   rv_u32 mie;
-  rv_u32 mip;
 } rv_csrs;
 
 typedef struct rv {
@@ -115,6 +119,7 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 #define rv_ioph(i) rv_ibf(i, 6, 5)
 #define rv_iopl(i) rv_ibf(i, 4, 2)
 #define rv_if3(i) rv_ibf(i, 14, 12)
+#define rv_if7(i) rv_ibf(i, 31, 25)
 #define rv_ird(i) rv_ibf(i, 11, 7)
 #define rv_irs1(i) rv_ibf(i, 19, 15)
 #define rv_irs2(i) rv_ibf(i, 24, 20)
@@ -148,13 +153,13 @@ rv_res rv_lcsr(rv *cpu, rv_u32 csr) {
   } else if (csr == 0x305) { /* mtvec */
     return cpu->csrs.mtvec;
   } else if (csr == 0x740) { /* mnscratch */
-    return cpu->csrs.mnscratch;
+    return RV_BAD;
   } else if (csr == 0x741) { /* mnepc */
-    return cpu->csrs.mnepc;
+    return RV_BAD;
   } else if (csr == 0x742) { /* mncause */
-    return cpu->csrs.mncause;
+    return RV_BAD;
   } else if (csr == 0x744) { /* mnstatus */
-    return cpu->csrs.mnstatus;
+    return RV_BAD;
   } else if (csr == 0x180) { /* satp */
     return RV_BAD;
   } else if (csr >= 0x3A0 && csr <= 0x3EF) { /* pmp* */
@@ -163,6 +168,12 @@ rv_res rv_lcsr(rv *cpu, rv_u32 csr) {
     return cpu->csrs.mie;
   } else if (csr == 0x302) { /* medeleg */
     return RV_BAD;
+  } else if (csr == 0x300) { /* mstatus */
+    return cpu->csrs.mstatus;
+  } else if (csr == 0x310) { /* mstatush */
+    return cpu->csrs.mstatush;
+  } else if (csr == 0x341) { /* mepc */
+    return cpu->csrs.mepc;
   } else {
     unimp();
   }
@@ -175,13 +186,13 @@ rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
   } else if (csr == 0x305) { /* mtvec */
     cpu->csrs.mtvec = v;
   } else if (csr == 0x740) { /* mnscratch */
-    cpu->csrs.mnscratch = v;
+    return RV_BAD;
   } else if (csr == 0x741) { /* mnepc */
-    cpu->csrs.mnepc = v & ~(rv_u32)3;
+    return RV_BAD;
   } else if (csr == 0x742) { /* mncause */
-    cpu->csrs.mncause = v | RV_SBIT;
+    return RV_BAD;
   } else if (csr == 0x744) { /* mnstatus */
-    cpu->csrs.mnstatus = v & 0xC84;
+    return RV_BAD;
   } else if (csr == 0x180) { /* satp */
     return RV_BAD;
   } else if (csr >= 0x3A0 && csr <= 0x3EF) { /* pmp* */
@@ -190,6 +201,12 @@ rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
     cpu->csrs.mie = v;
   } else if (csr == 0x302) { /* medeleg */
     return RV_BAD;
+  } else if (csr == 0x300) { /* mstatus */
+    cpu->csrs.mstatus = v & 0x807FF615;
+  } else if (csr == 0x310) { /* mstatush */
+    cpu->csrs.mstatush = v & 0x00000030;
+  } else if (csr == 0x341) { /* mepc */
+    cpu->csrs.mepc = v;
   } else {
     unimp();
   }
@@ -325,6 +342,9 @@ rv_u32 rv_inst(rv *cpu) {
         rv_sr(cpu, rv_ird(i), (rv_u32)res);
         if (rv_irs1(i) && rv_isbad(rv_scsr(cpu, csr, (rv_u32)res & ~s)))
           return rv_except(cpu, RV_EILL);
+      } else if (!rv_if3(i) && !rv_ird(i) && !rv_irs1(i) && rv_irs2(i) == 2 &&
+                 rv_if7(i) == 24) { /* mret */
+        next_ip = cpu->csrs.mepc;
       } else {
         unimp();
       }
