@@ -293,7 +293,15 @@ rv_u32 rv_inst(rv *cpu) {
       unimp();
     }
   } else if (rv_iopl(i) == 3) {
-    if (rv_ioph(i) == 3) {            /* 11/011: JAL */
+    if (rv_ioph(i) == 0) {  /* 00/011: MISC-MEM */
+      if (rv_if3(i) == 0) { /* fence */
+        rv_u32 fm = rv_ibf(i, 31, 28);
+        if (fm && fm != 16) /* fm != 0000/1000 */
+          return rv_except(cpu, RV_EILL);
+      } else {
+        unimp();
+      }
+    } else if (rv_ioph(i) == 3) {     /* 11/011: JAL */
       rv_sr(cpu, rv_ird(i), next_ip); /* jal */
       next_ip = cpu->ip + rv_iimm_j(i);
     } else {
