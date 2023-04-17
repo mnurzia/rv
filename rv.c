@@ -11,12 +11,24 @@ typedef unsigned int rv_u32;
 typedef rv_u8 (*rv_load_cb)(void *user, rv_u32 addr);
 typedef void (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
 
+typedef struct rv_csrs {
+  rv_u32 mnscratch;
+  rv_u32 mnepc;
+  rv_u32 mncause;
+  rv_u32 mnstatus;
+  rv_u32 mtvec;
+  rv_u32 mie;
+  rv_u32 mip;
+} rv_csrs;
+
 typedef struct rv {
+  rv_u32 except;
   rv_load_cb load_cb;
   rv_store_cb store_cb;
   rv_u32 r[32];
   rv_u32 ip;
   void *user;
+  rv_csrs csrs;
 } rv;
 
 void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb) {
@@ -24,7 +36,9 @@ void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb) {
   cpu->load_cb = load_cb;
   cpu->store_cb = store_cb;
   cpu->ip = 0x80000000;
+  cpu->except = 0;
   memset(cpu->r, 0, sizeof(cpu->r));
+  memset(&cpu->csrs, 0, sizeof(cpu->csrs));
 }
 
 void rv_dump(rv *cpu) {
@@ -50,7 +64,12 @@ void store_cb(void *user, rv_u32 addr, rv_u8 data) {
   ((rv_u8 *)user)[addr - 0x80000000] = data;
 }
 
-rv_u8 rv_lb(rv *cpu, rv_u32 addr) { return cpu->load_cb(cpu->user, addr); }
+rv_u8 rv_lb(rv *cpu, rv_u32 addr) {
+  if (cpu->except)
+    return 0;
+  else
+    return cpu->load_cb(cpu->user, addr);
+}
 
 rv_u32 rv_lh(rv *cpu, rv_u32 addr) {
   return (rv_u32)rv_lb(cpu, addr) | ((rv_u32)rv_lb(cpu, addr + 1) << 8);
@@ -61,7 +80,8 @@ rv_u32 rv_lw(rv *cpu, rv_u32 addr) {
 }
 
 void rv_sb(rv *cpu, rv_u32 addr, rv_u8 data) {
-  cpu->store_cb(cpu->user, addr, data);
+  if (!cpu->except)
+    cpu->store_cb(cpu->user, addr, data);
 }
 
 void rv_sh(rv *cpu, rv_u32 addr, rv_u32 data) {
@@ -75,6 +95,8 @@ void rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
 }
 
 rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
+
+#define RV_EILL 0
 
 #define RV_SBIT 0x80000000
 #define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT))
@@ -106,18 +128,49 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
 #define unimp() (rv_dump(cpu), assert(0 == "unimplemented instruction"))
 
-rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; }
+rv_u32 rv_lr(rv *cpu, rv_u8 i) {
+  if (!cpu->except)
+    return cpu->r[i];
+  else
+    return 0;
+}
 
 void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) {
-  if (i)
+  if (i && !cpu->except)
     cpu->r[i] = v;
+}
+
+void rv_except(rv *cpu, rv_u32 cause) {
+  printf("(E) %04X\n", cause);
+  cpu->except = (cause << 1) | 1;
 }
 
 rv_u32 rv_lcsr(rv *cpu, rv_u32 csr) {
   printf("(LCSR) %04X\n", csr);
+  if (cpu->except)
+    return 0;
   if (csr == 0xF14) { /* mhartid */
     return 0;
-  } else if (csr == 0x305) { /*mtvec */
+  } else if (csr == 0x305) { /* mtvec */
+    return cpu->csrs.mtvec;
+  } else if (csr == 0x740) { /* mnscratch */
+    return cpu->csrs.mnscratch;
+  } else if (csr == 0x741) { /* mnepc */
+    return cpu->csrs.mnepc;
+  } else if (csr == 0x742) { /* mncause */
+    return cpu->csrs.mncause;
+  } else if (csr == 0x744) { /* mnstatus */
+    return cpu->csrs.mnstatus;
+  } else if (csr == 0x180) { /* satp */
+    rv_except(cpu, RV_EILL);
+    return 0;
+  } else if (csr >= 0x3A0 && csr <= 0x3EF) { /* pmp* */
+    rv_except(cpu, RV_EILL);
+    return 0;
+  } else if (csr == 0x304) { /* mie */
+    return cpu->csrs.mie;
+  } else if (csr == 0x302) { /* medeleg */
+    rv_except(cpu, RV_EILL);
     return 0;
   } else {
     unimp();
@@ -126,9 +179,28 @@ rv_u32 rv_lcsr(rv *cpu, rv_u32 csr) {
 
 void rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
   printf("(SCSR) %04X <- %08X\n", csr, v);
+  if (cpu->except)
+    return;
   if (csr == 0xF14) { /* mhartid */
     unimp();
   } else if (csr == 0x305) { /* mtvec */
+    cpu->csrs.mtvec = v;
+  } else if (csr == 0x740) { /* mnscratch */
+    cpu->csrs.mnscratch = v;
+  } else if (csr == 0x741) { /* mnepc */
+    cpu->csrs.mnepc = v & ~(rv_u32)3;
+  } else if (csr == 0x742) { /* mncause */
+    cpu->csrs.mncause = v | RV_SBIT;
+  } else if (csr == 0x744) { /* mnstatus */
+    cpu->csrs.mnstatus = v & 0xC84;
+  } else if (csr == 0x180) { /* satp */
+    rv_except(cpu, RV_EILL);
+  } else if (csr >= 0x3A0 && csr <= 0x3EF) { /* pmp* */
+    rv_except(cpu, RV_EILL);
+  } else if (csr == 0x304) { /* mie */
+    cpu->csrs.mie = v;
+  } else if (csr == 0x302) { /* medeleg */
+    rv_except(cpu, RV_EILL);
   } else {
     unimp();
   }
@@ -247,7 +319,12 @@ int rv_inst(rv *cpu) {
   } else {
     unimp();
   }
-  cpu->ip = next_ip;
+  if (cpu->except) {
+    cpu->ip = (cpu->csrs.mtvec & (rv_u32)~1) +
+              4 * (cpu->except >> 1) * (cpu->csrs.mtvec & 1);
+    cpu->except = 0;
+  } else
+    cpu->ip = next_ip;
   return 0;
 }
 
