@@ -23,7 +23,7 @@ void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb) {
   cpu->user = user;
   cpu->load_cb = load_cb;
   cpu->store_cb = store_cb;
-  cpu->ip = 0x200;
+  cpu->ip = 0x80000000;
   memset(cpu->r, 0, sizeof(cpu->r));
 }
 
@@ -39,15 +39,15 @@ void rv_dump(rv *cpu) {
 
 rv_u8 load_cb(void *user, rv_u32 addr) {
   printf("(L) %08X", addr);
-  assert(addr >= 0x200 && addr < 0x10000);
-  printf("-> %02X\n", ((rv_u8 *)user)[addr]);
-  return ((rv_u8 *)user)[addr];
+  assert(addr >= 0x80000000 && addr < 0x80010000);
+  printf("-> %02X\n", ((rv_u8 *)user)[addr - 0x80000000]);
+  return ((rv_u8 *)user)[addr - 0x80000000];
 }
 
 void store_cb(void *user, rv_u32 addr, rv_u8 data) {
   printf("(S) %08X <- %02X\n", addr, data);
   assert(addr >= 0x200 && addr < 0x10000);
-  ((rv_u8 *)user)[addr] = data;
+  ((rv_u8 *)user)[addr - 0x80000000] = data;
 }
 
 rv_u8 rv_lb(rv *cpu, rv_u32 addr) { return cpu->load_cb(cpu->user, addr); }
@@ -187,6 +187,8 @@ int rv_inst(rv *cpu) {
     } else if (rv_ioph(i) == 1) { /* 01/100: OP */
       if (rv_if3(i) == 0) {       /* add */
         rv_sr(cpu, rv_ird(i), rv_lr(cpu, rv_irs1(i)) + rv_lr(cpu, rv_irs2(i)));
+      } else {
+        unimp();
       }
     } else {
       unimp();
@@ -205,7 +207,7 @@ int rv_inst(rv *cpu) {
 }
 
 int main(int argc, const char **argv) {
-  const char *bn = "bin/test_prog.bin";
+  const char *bn = argv[1];
   rv_u8 *mem = malloc(sizeof(rv_u8) * 0x10000);
   int fd = open(bn, O_RDONLY);
   rv cpu;
@@ -213,7 +215,7 @@ int main(int argc, const char **argv) {
   (void)(argv);
   assert(mem);
   memset(mem, 0, 0x10000);
-  read(fd, mem + 0x200, 0x10000 - 0x200);
+  read(fd, mem, 0x10000);
   rv_init(&cpu, (void *)mem, &load_cb, &store_cb);
   while (1) {
     rv_inst(&cpu);

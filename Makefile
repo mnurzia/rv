@@ -6,7 +6,10 @@ CC := clang
 all: bin/test_prog.bin bin/rv bin/test_prog.dmp
 
 bin:
-	mkdir bin
+	mkdir -p bin
+
+tests:
+	mkdir -p tests
 
 bin/test_prog.o: bin test_prog.c rt.s link.ld
 	$(RVCC) -nostdlib -nostartfiles -Tlink.ld -march=rv32i -mabi=ilp32 -o bin/test_prog.o test_prog.c rt.s -e _start -O
@@ -23,5 +26,12 @@ bin/rv: bin rv.c
 dump: bin bin/test_prog.dmp
 	cat bin/test_prog.dmp
 
+test-rv32i: tests
+	cp riscv-tests/isa/rv32ui-p-* tests
+	rm -rf tests/*.dump
+	find tests -name '*' -exec bash -c "$(RVOC) -O binary '{}' '{}.bin'" \;
+	find tests -name '*' ! -name '*.bin' -exec bash -c "$(RVOD) -D -M no-aliases -M numeric '{}' > '{}.dmp'" \;
+
 clean:
 	rm -rf bin
+	rm -rf tests
