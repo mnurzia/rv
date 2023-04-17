@@ -193,7 +193,7 @@ rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
   } else {
     unimp();
   }
-  return RV_BAD;
+  return 0;
 }
 
 rv_u32 rv_except(rv *cpu, rv_u32 cause) {
@@ -283,18 +283,20 @@ rv_u32 rv_inst(rv *cpu) {
       unimp();
     }
   } else if (rv_iopl(i) == 4) {
-    if (rv_ioph(i) == 0) {  /* 00/100: OP-IMM */
-      if (rv_if3(i) == 0) { /* addi */
-        rv_sr(cpu, rv_ird(i), rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i));
+    if (rv_ioph(i) == 0 || /* 00/100: OP-IMM */
+        rv_ioph(i) == 1) { /* 01/100: OP */
+      rv_u32 a = rv_lr(cpu, rv_irs1(i));
+      rv_u32 b = rv_ioph(i) ? rv_lr(cpu, rv_irs2(i)) : rv_iimm_i(i);
+      rv_u32 s = rv_ioph(i) ? rv_ib(i, 30) : 0;
+      rv_u32 y;
+      if (rv_if3(i) == 0) { /* add, addi, sub */
+        y = s ? a - b : a + b;
+      } else if (rv_if3(i) == 1) { /* sll, slli */
+        y = a << (b & 0x1F);
       } else {
         unimp();
       }
-    } else if (rv_ioph(i) == 1) { /* 01/100: OP */
-      if (rv_if3(i) == 0) {       /* add */
-        rv_sr(cpu, rv_ird(i), rv_lr(cpu, rv_irs1(i)) + rv_lr(cpu, rv_irs2(i)));
-      } else {
-        unimp();
-      }
+      rv_sr(cpu, rv_ird(i), y);
     } else if (rv_ioph(i) == 3) { /* 11/100: SYSTEM */
       rv_u32 csr = rv_iimm_iu(i);
       rv_u32 s = rv_if3(i) & 4 ? rv_irs1(i) : rv_lr(cpu, rv_irs1(i)); /* uimm */
@@ -340,6 +342,7 @@ rv_u32 rv_inst(rv *cpu) {
   } else {
     unimp();
   }
+  cpu->ip = next_ip;
   return 0;
 }
 
