@@ -38,7 +38,7 @@ void rv_dump(rv *cpu) {
 }
 
 rv_u8 load_cb(void *user, rv_u32 addr) {
-  printf("(L) %08X", addr);
+  printf("(L) %08X ", addr);
   assert(addr >= 0x80000000 && addr < 0x80010000);
   printf("-> %02X\n", ((rv_u8 *)user)[addr - 0x80000000]);
   return ((rv_u8 *)user)[addr - 0x80000000];
@@ -91,6 +91,7 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 #define rv_irs1(i) rv_ibf(i, 19, 15)
 #define rv_irs2(i) rv_ibf(i, 24, 20)
 #define rv_iimm_i(i) rv_signext(rv_ibf(i, 31, 20), 11)
+#define rv_iimm_iu(i) rv_ibf(i, 31, 20)
 #define rv_iimm_s(i)                                                           \
   (rv_signext(rv_ibf(i, 31, 25), 6) << 5 | rv_ibf(i, 30, 25) << 5 |            \
    rv_ibf(i, 11, 7))
@@ -110,6 +111,28 @@ rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; }
 void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) {
   if (i)
     cpu->r[i] = v;
+}
+
+rv_u32 rv_lcsr(rv *cpu, rv_u32 csr) {
+  printf("(LCSR) %04X\n", csr);
+  if (csr == 0xF14) { /* mhartid */
+    return 0;
+  } else if (csr == 0x305) { /*mtvec */
+    return 0;
+  } else {
+    unimp();
+  }
+}
+
+void rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
+  printf("(SCSR) %04X <- %08X\n", csr, v);
+  if (csr == 0xF14) { /* mhartid */
+    unimp();
+  } else if (csr == 0x305) { /* mtvec */
+  } else {
+    unimp();
+  }
+  (void)v;
 }
 
 int rv_inst(rv *cpu) {
@@ -190,12 +213,34 @@ int rv_inst(rv *cpu) {
       } else {
         unimp();
       }
+    } else if (rv_ioph(i) == 3) { /* 11/100: SYSTEM */
+      rv_u32 csr = rv_iimm_iu(i);
+      rv_u32 s = rv_if3(i) & 4 ? rv_irs1(i) : rv_lr(cpu, rv_irs1(i)); /* uimm */
+      if ((rv_if3(i) & 3) == 1) { /* csrrw / csrrwi */
+        if (rv_ird(i))
+          rv_sr(cpu, rv_ird(i), rv_lcsr(cpu, csr));
+        rv_scsr(cpu, csr, s);
+      } else if ((rv_if3(i) & 3) == 2) { /* csrrs / csrrsi */
+        rv_u32 p = rv_lcsr(cpu, csr);
+        rv_sr(cpu, rv_ird(i), p);
+        if (rv_irs1(i))
+          rv_scsr(cpu, csr, p | s);
+      } else if ((rv_if3(i) & 3) == 3) { /* csrrc / csrrci */
+        rv_u32 p = rv_lcsr(cpu, csr);
+        rv_sr(cpu, rv_ird(i), p);
+        if (rv_irs1(i))
+          rv_scsr(cpu, csr, p & ~s);
+      } else {
+        unimp();
+      }
     } else {
       unimp();
     }
   } else if (rv_iopl(i) == 5) {
-    if (rv_ioph(i) == 1) {                 /* 01/101: LUI */
-      rv_sr(cpu, rv_ird(i), rv_iimm_u(i)); /* lui */
+    if (rv_ioph(i) == 0) {                           /* 00/101: AUIPC */
+      rv_sr(cpu, rv_ird(i), rv_iimm_u(i) + cpu->ip); /* auipc */
+    } else if (rv_ioph(i) == 1) {                    /* 01/101: LUI */
+      rv_sr(cpu, rv_ird(i), rv_iimm_u(i));           /* lui */
     } else {
       unimp();
     }
