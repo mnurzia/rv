@@ -7,9 +7,10 @@
 
 typedef unsigned char rv_u8;
 typedef unsigned int rv_u32;
+typedef unsigned long rv_res;
 
-typedef rv_u8 (*rv_load_cb)(void *user, rv_u32 addr);
-typedef void (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
+typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr);
+typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
 
 typedef struct rv_csrs {
   rv_u32 mnscratch;
@@ -22,7 +23,6 @@ typedef struct rv_csrs {
 } rv_csrs;
 
 typedef struct rv {
-  rv_u32 except;
   rv_load_cb load_cb;
   rv_store_cb store_cb;
   rv_u32 r[32];
@@ -36,7 +36,6 @@ void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb) {
   cpu->load_cb = load_cb;
   cpu->store_cb = store_cb;
   cpu->ip = 0x80000000;
-  cpu->except = 0;
   memset(cpu->r, 0, sizeof(cpu->r));
   memset(&cpu->csrs, 0, sizeof(cpu->csrs));
 }
@@ -51,52 +50,59 @@ void rv_dump(rv *cpu) {
   }
 }
 
-rv_u8 load_cb(void *user, rv_u32 addr) {
+#define RV_BAD ((rv_res)1 << 32);
+#define rv_isbad(x) (x >> 32)
+
+rv_res load_cb(void *user, rv_u32 addr) {
   printf("(L) %08X ", addr);
-  assert(addr >= 0x80000000 && addr < 0x80010000);
-  printf("-> %02X\n", ((rv_u8 *)user)[addr - 0x80000000]);
-  return ((rv_u8 *)user)[addr - 0x80000000];
+  if (addr >= 0x80000000 && addr < 0x80010000) {
+    printf("-> %02X\n", ((rv_u8 *)user)[addr - 0x80000000]);
+    return ((rv_u8 *)user)[addr - 0x80000000];
+  } else {
+    printf("-> fault\n");
+    return RV_BAD;
+  }
 }
 
-void store_cb(void *user, rv_u32 addr, rv_u8 data) {
-  printf("(S) %08X <- %02X\n", addr, data);
-  assert(addr >= 0x200 && addr < 0x10000);
-  ((rv_u8 *)user)[addr - 0x80000000] = data;
-}
-
-rv_u8 rv_lb(rv *cpu, rv_u32 addr) {
-  if (cpu->except)
+rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
+  printf("(S) %08X <- %02X", addr, data);
+  if (addr >= 0x80000000 && addr < 0x80010000) {
+    printf("\n");
+    ((rv_u8 *)user)[addr - 0x80000000] = data;
     return 0;
-  else
-    return cpu->load_cb(cpu->user, addr);
+  } else {
+    printf("-> fault\n");
+    return RV_BAD;
+  }
 }
 
-rv_u32 rv_lh(rv *cpu, rv_u32 addr) {
+rv_res rv_lb(rv *cpu, rv_u32 addr) { return cpu->load_cb(cpu->user, addr); }
+
+rv_res rv_lh(rv *cpu, rv_u32 addr) {
   return (rv_u32)rv_lb(cpu, addr) | ((rv_u32)rv_lb(cpu, addr + 1) << 8);
 }
 
-rv_u32 rv_lw(rv *cpu, rv_u32 addr) {
+rv_res rv_lw(rv *cpu, rv_u32 addr) {
   return rv_lh(cpu, addr) | (rv_lh(cpu, addr + 2) << 16);
 }
 
-void rv_sb(rv *cpu, rv_u32 addr, rv_u8 data) {
-  if (!cpu->except)
-    cpu->store_cb(cpu->user, addr, data);
+rv_res rv_sb(rv *cpu, rv_u32 addr, rv_u8 data) {
+  return cpu->store_cb(cpu->user, addr, data);
 }
 
-void rv_sh(rv *cpu, rv_u32 addr, rv_u32 data) {
-  rv_sb(cpu, addr, (rv_u8)(data & 0xFF));
-  rv_sb(cpu, addr + 1, (rv_u8)(data >> 8));
+rv_res rv_sh(rv *cpu, rv_u32 addr, rv_u32 data) {
+  return rv_sb(cpu, addr, (rv_u8)(data & 0xFF)) |
+         rv_sb(cpu, addr + 1, (rv_u8)(data >> 8));
 }
 
-void rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
-  rv_sh(cpu, addr, data & 0xFFFF);
-  rv_sh(cpu, addr + 2, data >> 16);
+rv_res rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
+  return rv_sh(cpu, addr, data & 0xFFFF) | rv_sh(cpu, addr + 2, data >> 16);
 }
 
 rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
 #define RV_EILL 0
+#define RV_EPF 1
 
 #define RV_SBIT 0x80000000
 #define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT))
@@ -128,27 +134,15 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
 #define unimp() (rv_dump(cpu), assert(0 == "unimplemented instruction"))
 
-rv_u32 rv_lr(rv *cpu, rv_u8 i) {
-  if (!cpu->except)
-    return cpu->r[i];
-  else
-    return 0;
-}
+rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; }
 
 void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) {
-  if (i && !cpu->except)
+  if (i)
     cpu->r[i] = v;
 }
 
-void rv_except(rv *cpu, rv_u32 cause) {
-  printf("(E) %04X\n", cause);
-  cpu->except = (cause << 1) | 1;
-}
-
-rv_u32 rv_lcsr(rv *cpu, rv_u32 csr) {
+rv_res rv_lcsr(rv *cpu, rv_u32 csr) {
   printf("(LCSR) %04X\n", csr);
-  if (cpu->except)
-    return 0;
   if (csr == 0xF14) { /* mhartid */
     return 0;
   } else if (csr == 0x305) { /* mtvec */
@@ -162,25 +156,20 @@ rv_u32 rv_lcsr(rv *cpu, rv_u32 csr) {
   } else if (csr == 0x744) { /* mnstatus */
     return cpu->csrs.mnstatus;
   } else if (csr == 0x180) { /* satp */
-    rv_except(cpu, RV_EILL);
-    return 0;
+    return RV_BAD;
   } else if (csr >= 0x3A0 && csr <= 0x3EF) { /* pmp* */
-    rv_except(cpu, RV_EILL);
-    return 0;
+    return RV_BAD;
   } else if (csr == 0x304) { /* mie */
     return cpu->csrs.mie;
   } else if (csr == 0x302) { /* medeleg */
-    rv_except(cpu, RV_EILL);
-    return 0;
+    return RV_BAD;
   } else {
     unimp();
   }
 }
 
-void rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
+rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
   printf("(SCSR) %04X <- %08X\n", csr, v);
-  if (cpu->except)
-    return;
   if (csr == 0xF14) { /* mhartid */
     unimp();
   } else if (csr == 0x305) { /* mtvec */
@@ -194,50 +183,71 @@ void rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
   } else if (csr == 0x744) { /* mnstatus */
     cpu->csrs.mnstatus = v & 0xC84;
   } else if (csr == 0x180) { /* satp */
-    rv_except(cpu, RV_EILL);
+    return RV_BAD;
   } else if (csr >= 0x3A0 && csr <= 0x3EF) { /* pmp* */
-    rv_except(cpu, RV_EILL);
+    return RV_BAD;
   } else if (csr == 0x304) { /* mie */
     cpu->csrs.mie = v;
   } else if (csr == 0x302) { /* medeleg */
-    rv_except(cpu, RV_EILL);
+    return RV_BAD;
   } else {
     unimp();
   }
-  (void)v;
+  return RV_BAD;
 }
 
-int rv_inst(rv *cpu) {
+rv_u32 rv_except(rv *cpu, rv_u32 cause) {
+  (void)cpu;
+  printf("(E) %04X\n", cause);
+  cpu->ip = (cpu->csrs.mtvec & (rv_u32)~1) + 4 * cause * (cpu->csrs.mtvec & 1);
+  return cause;
+}
+
+rv_u32 rv_inst(rv *cpu) {
   /* fetch instruction */
-  rv_u32 i = rv_lw(cpu, cpu->ip);
+  rv_res ires = rv_lw(cpu, cpu->ip);
+  rv_u32 i = (rv_u32)ires;
   rv_u32 next_ip = cpu->ip + rv_isz(i);
+  if (rv_isbad(ires))
+    return rv_except(cpu, RV_EPF);
   if (rv_iopl(i) == 0) {
     if (rv_ioph(i) == 0) { /* 00/000: LOAD */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
+      rv_res res;
+      rv_u32 v;
       if (rv_if3(i) == 0) { /* lb */
-        rv_sr(cpu, rv_ird(i), rv_signext(rv_lb(cpu, addr), 7));
+        res = rv_lb(cpu, addr);
+        v = rv_signext((rv_u32)res, 7);
       } else if (rv_if3(i) == 1) { /* lh */
-        rv_sr(cpu, rv_ird(i), rv_signext(rv_lh(cpu, addr), 15));
+        res = rv_lh(cpu, addr);
+        v = rv_signext((rv_u32)res, 15);
       } else if (rv_if3(i) == 2) { /* lw */
-        rv_sr(cpu, rv_ird(i), rv_lw(cpu, addr));
+        v = (rv_u32)(res = rv_lw(cpu, addr));
       } else if (rv_if3(i) == 4) { /* lbu */
-        rv_sr(cpu, rv_ird(i), rv_lb(cpu, addr));
+        v = (rv_u32)(res = rv_lb(cpu, addr));
       } else if (rv_if3(i) == 5) { /* lhu */
-        rv_sr(cpu, rv_ird(i), rv_lh(cpu, addr));
+        v = (rv_u32)(res = rv_lh(cpu, addr));
       } else {
         unimp();
       }
+      if (rv_isbad(res))
+        return rv_except(cpu, RV_EPF);
+      else
+        rv_sr(cpu, rv_ird(i), v);
     } else if (rv_ioph(i) == 1) { /* 01/000: STORE */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_s(i);
+      rv_res res;
       if (rv_if3(i) == 0) { /* sb */
-        rv_sb(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFF);
+        res = rv_sb(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFF);
       } else if (rv_if3(i) == 1) { /* sh */
-        rv_sh(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFFFF);
+        res = rv_sh(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFFFF);
       } else if (rv_if3(i) == 2) { /* sw */
-        rv_sw(cpu, addr, rv_lr(cpu, rv_irs2(i)));
+        res = rv_sw(cpu, addr, rv_lr(cpu, rv_irs2(i)));
       } else {
         unimp();
       }
+      if (rv_isbad(res))
+        return rv_except(cpu, RV_EPF);
     } else if (rv_ioph(i) == 3) { /* 11/000: BRANCH */
       rv_u32 a = rv_lr(cpu, rv_irs1(i)), b = rv_lr(cpu, rv_irs2(i));
       rv_u32 y = a - b;
@@ -288,20 +298,31 @@ int rv_inst(rv *cpu) {
     } else if (rv_ioph(i) == 3) { /* 11/100: SYSTEM */
       rv_u32 csr = rv_iimm_iu(i);
       rv_u32 s = rv_if3(i) & 4 ? rv_irs1(i) : rv_lr(cpu, rv_irs1(i)); /* uimm */
+      rv_res res;
       if ((rv_if3(i) & 3) == 1) { /* csrrw / csrrwi */
-        if (rv_ird(i))
-          rv_sr(cpu, rv_ird(i), rv_lcsr(cpu, csr));
-        rv_scsr(cpu, csr, s);
+        if (rv_irs1(i)) {
+          res = rv_lcsr(cpu, csr);
+          if (rv_isbad(res))
+            return rv_except(cpu, RV_EILL);
+          if (rv_ird(i))
+            rv_sr(cpu, rv_ird(i), (rv_u32)res);
+        }
+        if (rv_isbad(rv_scsr(cpu, csr, s)))
+          return rv_except(cpu, RV_EILL);
       } else if ((rv_if3(i) & 3) == 2) { /* csrrs / csrrsi */
-        rv_u32 p = rv_lcsr(cpu, csr);
-        rv_sr(cpu, rv_ird(i), p);
-        if (rv_irs1(i))
-          rv_scsr(cpu, csr, p | s);
+        res = rv_lcsr(cpu, csr);
+        if (rv_isbad(res))
+          return rv_except(cpu, RV_EILL);
+        rv_sr(cpu, rv_ird(i), (rv_u32)res);
+        if (rv_irs1(i) && rv_isbad(rv_scsr(cpu, csr, (rv_u32)res | s)))
+          return rv_except(cpu, RV_EILL);
       } else if ((rv_if3(i) & 3) == 3) { /* csrrc / csrrci */
-        rv_u32 p = rv_lcsr(cpu, csr);
-        rv_sr(cpu, rv_ird(i), p);
-        if (rv_irs1(i))
-          rv_scsr(cpu, csr, p & ~s);
+        res = rv_lcsr(cpu, csr);
+        if (rv_isbad(res))
+          return rv_except(cpu, RV_EILL);
+        rv_sr(cpu, rv_ird(i), (rv_u32)res);
+        if (rv_irs1(i) && rv_isbad(rv_scsr(cpu, csr, (rv_u32)res & ~s)))
+          return rv_except(cpu, RV_EILL);
       } else {
         unimp();
       }
@@ -319,12 +340,6 @@ int rv_inst(rv *cpu) {
   } else {
     unimp();
   }
-  if (cpu->except) {
-    cpu->ip = (cpu->csrs.mtvec & (rv_u32)~1) +
-              4 * (cpu->except >> 1) * (cpu->csrs.mtvec & 1);
-    cpu->except = 0;
-  } else
-    cpu->ip = next_ip;
   return 0;
 }
 
