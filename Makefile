@@ -26,11 +26,15 @@ bin/rv: bin rv.c
 dump: bin bin/test_prog.dmp
 	cat bin/test_prog.dmp
 
-test-rv32i: tests
+test-files: tests
 	cp riscv-tests/isa/rv32ui-p-* tests
+	cp riscv-tests/isa/rv32uc-p-* tests
 	rm -rf tests/*.dump
-	find tests -name '*' -exec bash -c "$(RVOC) -O binary '{}' '{}.bin'" \;
-	find tests -name '*' ! -name '*.bin' -exec bash -c "$(RVOD) -D -M no-aliases -M numeric '{}' > '{}.dmp'" \;
+	find tests -name '*' ! -name '*.dmp' -exec bash -c "$(RVOD) -D -M no-aliases -M numeric '{}' > '{}.dmp'" \;
+	find tests -name '*' ! -name '*.dmp' -exec bash -c "$(RVOC) -O binary '{}' '{}'" \;
+
+test: bin/rv test-files test.py
+	python test.py
 
 clean:
 	rm -rf bin
