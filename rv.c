@@ -58,24 +58,18 @@ void rv_dump(rv *cpu) {
 #define rv_isbad(x) (x >> 32)
 
 rv_res load_cb(void *user, rv_u32 addr) {
-  printf("(L) %08X ", addr);
   if (addr >= 0x80000000 && addr < 0x80010000) {
-    printf("-> %02X\n", ((rv_u8 *)user)[addr - 0x80000000]);
     return ((rv_u8 *)user)[addr - 0x80000000];
   } else {
-    printf("-> fault\n");
     return RV_BAD;
   }
 }
 
 rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
-  printf("(S) %08X <- %02X", addr, data);
   if (addr >= 0x80000000 && addr < 0x80010000) {
-    printf("\n");
     ((rv_u8 *)user)[addr - 0x80000000] = data;
     return 0;
   } else {
-    printf("-> fault\n");
     return RV_BAD;
   }
 }
@@ -105,8 +99,14 @@ rv_res rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
 
 rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
-#define RV_EILL 0
-#define RV_EPF 1
+#define RV_EIALIGN 0
+#define RV_EIFAULT 1
+#define RV_EILL 2
+#define RV_EBP 3
+#define RV_ELALIGN 4
+#define RV_ELFAULT 5
+#define RV_ESALIGN 6
+#define RV_ESFAULT 7
 
 #define RV_SBIT 0x80000000
 #define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT))
@@ -133,7 +133,7 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 #define rv_iimm_j(i)                                                           \
   (rv_signext(rv_ib(i, 31), 0) << 20 | rv_ibf(i, 19, 12) << 12 |               \
    rv_ib(i, 20) << 11 | rv_ibf(i, 30, 21) << 1)
-#define rv_isz(i) (rv_ibf(i, 1, 0) + 1)
+#define rv_isz(i) (rv_ibf(i, 1, 0) == 3 ? 4 : 2)
 
 #define unimp() (rv_dump(cpu), assert(0 == "unimplemented instruction"))
 
@@ -172,6 +172,8 @@ rv_res rv_lcsr(rv *cpu, rv_u32 csr) {
     return cpu->csrs.mstatush;
   } else if (csr == 0x341) { /* mepc */
     return cpu->csrs.mepc;
+  } else if (csr == 0x342) { /* mcause */
+    return cpu->csrs.mcause;
   } else {
     unimp();
   }
@@ -205,6 +207,8 @@ rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
     cpu->csrs.mstatush = v & 0x00000030;
   } else if (csr == 0x341) { /* mepc */
     cpu->csrs.mepc = v;
+  } else if (csr == 0x342) { /* mcause */
+    cpu->csrs.mcause = v;
   } else {
     unimp();
   }
@@ -218,26 +222,71 @@ rv_u32 rv_except(rv *cpu, rv_u32 cause) {
   return cause + 1;
 }
 
+#define rv_cop(c) rv_ibf(c, 1, 0)
+#define rv_cf3(c) rv_ibf(c, 15, 13)
+
+rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
+  (void)c;
+  if (rv_cop(c) == 0) {
+    if (rv_cf3(c) == 0 && c != 0) { /* c.addi4spn */
+      rv_u32 nzuimm = rv_ibf(c, 10, 7) << 6 | rv_ibf(c, 12, 11) << 4 |
+                      rv_ib(c, 6) << 3 | rv_ib(c, 5) << 2;
+      return nzuimm << 20 | 2 << 15 | 0 << 12 | (rv_ibf(c, 4, 2) + 8) << 7 |
+             0x13;       /* -> addi rd', x2, nzuimm */
+    } else if (c == 0) { /* illegal */
+      return 0;
+    } else {
+      unimp();
+    }
+  } else if (rv_cop(c) == 1) {
+    if (rv_cf3(c) == 3) {          /* 00/011: LUI/ADDI16SP */
+      if (rv_ibf(c, 11, 7) == 2) { /* c.addi16sp */
+        rv_u32 nzimm =
+            (rv_signext(rv_ib(c, 12), 0) << 9 | rv_ibf(c, 4, 3) << 7 |
+             rv_ib(c, 5) << 6 | rv_ib(c, 2) << 5 | rv_ib(c, 6) << 4) &
+            0xFFF;
+        return nzimm << 20 | 2 << 15 | 0 << 12 | 2 << 7 |
+               0x13; /* -> addi x2, x2, nzimm */
+      } else {
+        unimp();
+      }
+    } else {
+      unimp();
+    }
+  } else {
+    unimp();
+  }
+  return 0;
+}
+
 rv_u32 rv_inst(rv *cpu) {
   /* fetch instruction */
   rv_res ires = rv_lw(cpu, cpu->ip);
   rv_u32 i = (rv_u32)ires;
-  rv_u32 next_ip = cpu->ip + rv_isz(i);
-  if (cpu->ip == 0x800001A0)
-    printf("hit\n");
+  rv_u32 next_ip;
   if (rv_isbad(ires))
-    return rv_except(cpu, RV_EPF);
+    printf("(IF) %08X -> fault\n", cpu->ip);
+  else
+    printf("(IF) %08X -> %08X\n", cpu->ip, i);
+  if (rv_isbad(ires))
+    return rv_except(cpu, RV_EIFAULT);
+  if (cpu->ip == 0x80002028)
+    printf("hit\n");
+  next_ip = cpu->ip + rv_isz(i);
+  if (rv_isz(i) != 4)
+    i = rv_cvtinst(cpu, i & 0xFFFF);
   if (rv_iopl(i) == 0) {
     if (rv_ioph(i) == 0) { /* 00/000: LOAD */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
       rv_res res;
       rv_u32 v;
+      static const char *load_types[] = {"b",  "h",  "w",  "XX",
+                                         "bu", "hu", "XX", "XX"};
+      printf("(L%s) %08X -> ", load_types[rv_if3(i)], addr);
       if (rv_if3(i) == 0) { /* lb */
-        res = rv_lb(cpu, addr);
-        v = rv_signext((rv_u32)res, 7);
+        v = rv_signext((rv_u32)(res = rv_lb(cpu, addr)), 7);
       } else if (rv_if3(i) == 1) { /* lh */
-        res = rv_lh(cpu, addr);
-        v = rv_signext((rv_u32)res, 15);
+        v = rv_signext((rv_u32)(res = rv_lh(cpu, addr)), 15);
       } else if (rv_if3(i) == 2) { /* lw */
         v = (rv_u32)(res = rv_lw(cpu, addr));
       } else if (rv_if3(i) == 4) { /* lbu */
@@ -248,12 +297,20 @@ rv_u32 rv_inst(rv *cpu) {
         unimp();
       }
       if (rv_isbad(res))
-        return rv_except(cpu, RV_EPF);
+        printf("fault\n");
+      else
+        printf("%08X\n", v);
+      if (rv_isbad(res))
+        return rv_except(cpu, RV_ELFAULT);
       else
         rv_sr(cpu, rv_ird(i), v);
     } else if (rv_ioph(i) == 1) { /* 01/000: STORE */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_s(i);
       rv_res res;
+      static const char *store_types[] = {"b",  "h",  "w",  "XX",
+                                          "XX", "XX", "XX", "XX"};
+      printf("(S%s) %08X <- %08X", store_types[rv_if3(i)], addr,
+             rv_lr(cpu, rv_irs2(i)));
       if (rv_if3(i) == 0) { /* sb */
         res = rv_sb(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFF);
       } else if (rv_if3(i) == 1) { /* sh */
@@ -264,7 +321,11 @@ rv_u32 rv_inst(rv *cpu) {
         unimp();
       }
       if (rv_isbad(res))
-        return rv_except(cpu, RV_EPF);
+        printf("-> fault\n");
+      else
+        printf("\n");
+      if (rv_isbad(res))
+        return rv_except(cpu, RV_ESFAULT);
     } else if (rv_ioph(i) == 3) { /* 11/000: BRANCH */
       rv_u32 a = rv_lr(cpu, rv_irs1(i)), b = rv_lr(cpu, rv_irs2(i));
       rv_u32 y = a - b;
@@ -299,6 +360,7 @@ rv_u32 rv_inst(rv *cpu) {
         rv_u32 fm = rv_ibf(i, 31, 28);
         if (fm && fm != 16) /* fm != 0000/1000 */
           return rv_except(cpu, RV_EILL);
+      } else if (rv_if3(i) == 1) { /* fence.i */
       } else {
         unimp();
       }
@@ -319,14 +381,18 @@ rv_u32 rv_inst(rv *cpu) {
         y = s ? a - b : a + b;
       } else if (rv_if3(i) == 1) { /* sll, slli */
         y = a << sh;
+      } else if (rv_if3(i) == 2) { /* slt, slti */
+        y = rv_ovf(a, b, a - b) != rv_sgn(a - b);
+      } else if (rv_if3(i) == 3) { /* sltu, sltiu */
+        y = a - b > a;
+      } else if (rv_if3(i) == 4) { /* xor, xori */
+        y = a ^ b;
       } else if (rv_if3(i) == 5) { /* srl, srli, sra, srai */
         y = (a >> sh) | (((rv_u32)0 - (s && (a & RV_SBIT))) << (0x1F - sh));
       } else if (rv_if3(i) == 6) { /* or, ori */
         y = a | b;
-      } else if (rv_if3(i) == 7) { /* and, andi */
+      } else { /* and, andi */
         y = a & b;
-      } else {
-        unimp();
       }
       rv_sr(cpu, rv_ird(i), y);
     } else if (rv_ioph(i) == 3) { /* 11/100: SYSTEM */
@@ -366,8 +432,10 @@ rv_u32 rv_inst(rv *cpu) {
             if (rv_lr(cpu, 17) == 93) {
               if (rv_lr(cpu, 3) == 1)
                 printf("PASS!\n");
-              else
+              else {
                 printf("FAIL (%02X)!\n", rv_lr(cpu, 10) >> 1);
+                exit(EXIT_FAILURE);
+              }
               return 0;
             }
           } else {
