@@ -110,9 +110,7 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
 #define RV_SBIT 0x80000000
 #define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT))
-#define rv_ovf(a, b, y)                                                        \
-  ((!((a)&RV_SBIT) && !((b)&RV_SBIT) && !!((y)&RV_SBIT)) ||                    \
-   (!!((a)&RV_SBIT) && !!((b)&RV_SBIT) && !!((y)&RV_SBIT)))
+#define rv_ovf(a, b, y) ((((a) ^ (b)) & RV_SBIT) && (((y) ^ (a)) & RV_SBIT))
 
 #define rv_ibf(i, h, l) (((i) >> (l)) & ((1 << (h - l + 1)) - 1))
 #define rv_ib(i, l) rv_ibf(i, l, l)
@@ -225,6 +223,8 @@ rv_u32 rv_inst(rv *cpu) {
   rv_res ires = rv_lw(cpu, cpu->ip);
   rv_u32 i = (rv_u32)ires;
   rv_u32 next_ip = cpu->ip + rv_isz(i);
+  if (cpu->ip == 0x800001A0)
+    printf("hit\n");
   if (rv_isbad(ires))
     return rv_except(cpu, RV_EPF);
   if (rv_iopl(i) == 0) {
@@ -287,8 +287,9 @@ rv_u32 rv_inst(rv *cpu) {
     }
   } else if (rv_iopl(i) == 1) {
     if (rv_ioph(i) == 3 && rv_if3(i) == 0) { /* 11/001: JALR */
-      rv_sr(cpu, rv_ird(i), next_ip);        /* jalr */
-      next_ip = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
+      rv_u32 target = (rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i)) & (~(rv_u32)1);
+      rv_sr(cpu, rv_ird(i), next_ip); /* jalr */
+      next_ip = target;
     } else {
       unimp();
     }
@@ -312,12 +313,18 @@ rv_u32 rv_inst(rv *cpu) {
         rv_ioph(i) == 1) { /* 01/100: OP */
       rv_u32 a = rv_lr(cpu, rv_irs1(i));
       rv_u32 b = rv_ioph(i) ? rv_lr(cpu, rv_irs2(i)) : rv_iimm_i(i);
-      rv_u32 s = rv_ioph(i) ? rv_ib(i, 30) : 0;
+      rv_u32 s = (rv_ioph(i) || rv_if3(i)) ? rv_ib(i, 30) : 0, sh = b & 0x1F;
       rv_u32 y;
       if (rv_if3(i) == 0) { /* add, addi, sub */
         y = s ? a - b : a + b;
       } else if (rv_if3(i) == 1) { /* sll, slli */
-        y = a << (b & 0x1F);
+        y = a << sh;
+      } else if (rv_if3(i) == 5) { /* srl, srli, sra, srai */
+        y = (a >> sh) | (((rv_u32)0 - (s && (a & RV_SBIT))) << (0x1F - sh));
+      } else if (rv_if3(i) == 6) { /* or, ori */
+        y = a | b;
+      } else if (rv_if3(i) == 7) { /* and, andi */
+        y = a & b;
       } else {
         unimp();
       }
@@ -357,7 +364,10 @@ rv_u32 rv_inst(rv *cpu) {
           } else if (!rv_irs1(i) && !rv_irs2(i) && !rv_if7(i)) { /* ecall */
             printf("(ECALL) ");
             if (rv_lr(cpu, 17) == 93) {
-              printf("PASS!\n");
+              if (rv_lr(cpu, 3) == 1)
+                printf("PASS!\n");
+              else
+                printf("FAIL (%02X)!\n", rv_lr(cpu, 10) >> 1);
               return 0;
             }
           } else {
