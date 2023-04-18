@@ -232,6 +232,9 @@ rv_u32 rv_except(rv *cpu, rv_u32 cause) {
   (rv_ibf(imm, 11, 5) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 |         \
    rv_ibf(imm, 4, 0) << 7 | (op) << 2 | 3)
 #define rv_i_u(op, rd, imm) ((imm) << 12 | (rd) << 7 | (op) << 2 | 3)
+#define rv_i_r(op, f3, rd, rs1, rs2, f7)                                       \
+  ((f7) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 | (rd) << 7 |           \
+   (op) << 2 | 3)
 
 rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
   (void)c;
@@ -262,7 +265,7 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
       rv_u32 nzimm =
           (rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2)) & 0xFFF;
       return rv_i_i(4, 0, rv_ibf(c, 11, 7), 0, nzimm);
-    } else if (rv_cf3(c) == 3) {   /* 00/011: LUI/ADDI16SP */
+    } else if (rv_cf3(c) == 3) {   /* 01/011: LUI/ADDI16SP */
       if (rv_ibf(c, 11, 7) == 2) { /* c.addi16sp -> addi x2, x2, nzimm */
         rv_u32 nzimm =
             (rv_signext(rv_ib(c, 12), 0) << 9 | rv_ibf(c, 4, 3) << 7 |
@@ -270,9 +273,24 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
             0xFFF;
         return rv_i_i(4, 0, 2, 2, nzimm);
       } else if (rv_ibf(c, 11, 7) != 0) { /* c.lui -> lui rd, nzimm */
-        rv_u32 nzimm = rv_signext(rv_ib(c, 12), 0) << 17 | rv_ibf(c, 6, 2)
-                                                               << 12;
+        rv_u32 nzimm = rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2);
         return rv_i_u(13, rv_ibf(c, 11, 7), nzimm);
+      } else {
+        unimp();
+      }
+    } else if (rv_cf3(c) == 4) {    /* 01/100: MISC-ALU */
+      if (rv_ibf(c, 11, 10) == 0) { /* c.srli -> srli rd', rd', shamt */
+        rv_u32 shamt = rv_ib(c, 12) << 5 | rv_ibf(c, 6, 2);
+        return rv_i_r(4, 5, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
+                      shamt, 0);
+      } else if (rv_ibf(c, 11, 10) == 1) { /* c.srai -> srai rd', rd', shamt */
+        rv_u32 shamt = rv_ib(c, 12) << 5 | rv_ibf(c, 6, 2);
+        return rv_i_r(4, 5, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
+                      shamt, 32);
+      } else if (rv_ibf(c, 11, 10) == 2) { /* c.andi -> andi rd', rd', imm */
+        rv_u32 imm = rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2);
+        return rv_i_i(4, 7, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
+                      imm);
       } else {
         unimp();
       }
@@ -296,7 +314,7 @@ rv_u32 rv_inst(rv *cpu) {
     printf("(IF) %08X -> %08X\n", cpu->ip, i);
   if (rv_isbad(ires))
     return rv_except(cpu, RV_EIFAULT);
-  if (cpu->ip == 0x8000206C)
+  if (cpu->ip == 0x80002094)
     printf("hit\n");
   next_ip = cpu->ip + rv_isz(i);
   if (rv_isz(i) != 4)
@@ -459,7 +477,7 @@ rv_u32 rv_inst(rv *cpu) {
               if (rv_lr(cpu, 3) == 1)
                 printf("PASS!\n");
               else {
-                printf("FAIL (%02X)!\n", rv_lr(cpu, 10) >> 1);
+                printf("FAIL (%i)!\n", rv_lr(cpu, 10) >> 1);
                 exit(EXIT_FAILURE);
               }
               return 0;
