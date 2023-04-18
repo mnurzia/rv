@@ -350,11 +350,18 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
       rv_u32 offset =
           rv_ibf(c, 3, 2) << 6 | rv_ib(c, 12) << 5 | rv_ibf(c, 6, 4) << 2;
       return rv_i_i(0, 2, rv_ibf(c, 11, 7), 2, offset);
-    } else if (rv_cf3(c) == 4 && !rv_ib(c, 12)) { /* c.jr -> jalr x0, 0(rs1) */
+    } else if (rv_cf3(c) == 4 && !rv_ib(c, 12) &&
+               !rv_ibf(c, 6, 2)) { /* c.jr -> jalr x0, 0(rs1) */
       return rv_i_i(25, 0, 0, rv_ibf(c, 11, 7), 0);
-    } else if (rv_cf3(c) == 4 && rv_ib(c, 12) &&
-               rv_ibf(c, 11, 7)) { /* c.jalr -> jalr x1, 0(rs1) */
+    } else if (rv_cf3(c) == 4 && !rv_ib(c, 12)) { /* c.mv -> add rd, x0, rs2 */
+      return rv_i_r(12, 0, rv_ibf(c, 11, 7), 0, rv_ibf(c, 6, 2), 0);
+    } else if (rv_cf3(c) == 4 && rv_ib(c, 12) && rv_ibf(c, 11, 7) &&
+               !rv_ibf(c, 6, 2)) { /* c.jalr -> jalr x1, 0(rs1) */
       return rv_i_i(25, 0, 1, rv_ibf(c, 11, 7), 0);
+    } else if (rv_cf3(c) == 4 && rv_ib(c, 12) && rv_ibf(c, 11, 7) &&
+               rv_ibf(c, 6, 2)) { /* c.add -> add rd, rd, rs2 */
+      return rv_i_r(12, 0, rv_ibf(c, 11, 7), rv_ibf(c, 11, 7), rv_ibf(c, 6, 2),
+                    0);
     } else if (rv_cf3(c) == 6) { /* c.swsp -> sw rs2, offset(x2) */
       rv_u32 offset = rv_ibf(c, 8, 7) << 6 | rv_ibf(c, 12, 9) << 2;
       return rv_i_s(8, 2, 2, rv_ibf(c, 6, 2), offset);
@@ -378,7 +385,7 @@ rv_u32 rv_inst(rv *cpu) {
     printf("(IF) %08X -> %08X\n", cpu->ip, i);
   if (rv_isbad(ires))
     return rv_except(cpu, RV_EIFAULT);
-  if (cpu->ip == 0x80002094)
+  if (cpu->ip == 0x80002230)
     printf("hit\n");
   next_ip = cpu->ip + rv_isz(i);
   if (rv_isz(i) != 4)
