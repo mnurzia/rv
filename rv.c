@@ -1,3 +1,4 @@
+/* rv32uic */
 #include <assert.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -112,39 +113,41 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 #define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT))
 #define rv_ovf(a, b, y) ((((a) ^ (b)) & RV_SBIT) && (((y) ^ (a)) & RV_SBIT))
 
-#define rv_ibf(i, h, l) (((i) >> (l)) & ((1 << (h - l + 1)) - 1))
-#define rv_ib(i, l) rv_ibf(i, l, l)
-#define rv_ioph(i) rv_ibf(i, 6, 5)
-#define rv_iopl(i) rv_ibf(i, 4, 2)
-#define rv_if3(i) rv_ibf(i, 14, 12)
-#define rv_if7(i) rv_ibf(i, 31, 25)
-#define rv_ird(i) rv_ibf(i, 11, 7)
-#define rv_irs1(i) rv_ibf(i, 19, 15)
-#define rv_irs2(i) rv_ibf(i, 24, 20)
-#define rv_iimm_i(i) rv_signext(rv_ibf(i, 31, 20), 11)
-#define rv_iimm_iu(i) rv_ibf(i, 31, 20)
+#define rv_bf(i, h, l)                                                         \
+  (((i) >> (l)) & ((1 << (h - l + 1)) - 1))           /* bit field             \
+                                                       */
+#define rv_b(i, l) rv_bf(i, l, l)                     /* bit */
+#define rv_ioph(i) rv_bf(i, 6, 5)                     /* opcode[6:5] */
+#define rv_iopl(i) rv_bf(i, 4, 2)                     /* opcode[4:2] */
+#define rv_if3(i) rv_bf(i, 14, 12)                    /* funct3 */
+#define rv_if7(i) rv_bf(i, 31, 25)                    /* funct7 */
+#define rv_ird(i) rv_bf(i, 11, 7)                     /* rd */
+#define rv_irs1(i) rv_bf(i, 19, 15)                   /* rs1 */
+#define rv_irs2(i) rv_bf(i, 24, 20)                   /* rs2 */
+#define rv_iimm_i(i) rv_signext(rv_bf(i, 31, 20), 11) /* imm. for I-type */
+#define rv_iimm_iu(i) rv_bf(i, 31, 20) /* z-ext'd. imm. for I-type */
 #define rv_iimm_s(i)                                                           \
-  (rv_signext(rv_ibf(i, 31, 25), 6) << 5 | rv_ibf(i, 30, 25) << 5 |            \
-   rv_ibf(i, 11, 7))
-#define rv_iimm_u(i) (rv_ibf(i, 31, 12) << 12)
+  (rv_signext(rv_bf(i, 31, 25), 6) << 5 | rv_bf(i, 30, 25) << 5 |              \
+   rv_bf(i, 11, 7))                           /* imm. for S-type */
+#define rv_iimm_u(i) (rv_bf(i, 31, 12) << 12) /* imm. for U-type */
 #define rv_iimm_b(i)                                                           \
-  (rv_signext(rv_ib(i, 31), 0) << 12 | rv_ib(i, 7) << 11 |                     \
-   rv_ibf(i, 30, 25) << 5 | rv_ibf(i, 11, 8) << 1)
+  (rv_signext(rv_b(i, 31), 0) << 12 | rv_b(i, 7) << 11 |                       \
+   rv_bf(i, 30, 25) << 5 | rv_bf(i, 11, 8) << 1) /* imm. for B-type */
 #define rv_iimm_j(i)                                                           \
-  (rv_signext(rv_ib(i, 31), 0) << 20 | rv_ibf(i, 19, 12) << 12 |               \
-   rv_ib(i, 20) << 11 | rv_ibf(i, 30, 21) << 1)
-#define rv_isz(i) (rv_ibf(i, 1, 0) == 3 ? 4 : 2)
+  (rv_signext(rv_b(i, 31), 0) << 20 | rv_bf(i, 19, 12) << 12 |                 \
+   rv_b(i, 20) << 11 | rv_bf(i, 30, 21) << 1)   /* imm. for J-type */
+#define rv_isz(i) (rv_bf(i, 1, 0) == 3 ? 4 : 2) /* instruction size */
 
 #define unimp() (rv_dump(cpu), assert(0 == "unimplemented instruction"))
 
-rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; }
+rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; } /* load register */
 
-void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) {
+void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) { /* store register */
   if (i)
     cpu->r[i] = v;
 }
 
-rv_res rv_lcsr(rv *cpu, rv_u32 csr) {
+rv_res rv_lcsr(rv *cpu, rv_u32 csr) { /* load csr */
   printf("(LCSR) %04X\n", csr);
   if (csr == 0xF14) { /* mhartid */
     return 0;
@@ -179,7 +182,7 @@ rv_res rv_lcsr(rv *cpu, rv_u32 csr) {
   }
 }
 
-rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
+rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) { /* store csr */
   printf("(SCSR) %04X <- %08X\n", csr, v);
   if (csr == 0xF14) { /* mhartid */
     unimp();
@@ -215,108 +218,116 @@ rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) {
   return 0;
 }
 
-rv_u32 rv_except(rv *cpu, rv_u32 cause) {
+rv_u32 rv_except(rv *cpu, rv_u32 cause) { /* set exception state */
   (void)cpu;
   printf("(E) %04X\n", cause);
   cpu->ip = (cpu->csrs.mtvec & (rv_u32)~1) + 4 * cause * (cpu->csrs.mtvec & 1);
   return cause + 1;
 }
 
-#define rv_cop(c) rv_ibf(c, 1, 0)
-#define rv_cf3(c) rv_ibf(c, 15, 13)
-#define rv_crp(r) (r + 8)
+#define rv_cop(c) rv_bf(c, 1, 0)   /* c-inst. op */
+#define rv_cf3(c) rv_bf(c, 15, 13) /* c-inst. funct3 */
+#define rv_crp(r) (r + 8)          /* c-inst. register offsetter */
+#define rv_cimm_ciw(c)                                                         \
+  (rv_bf(c, 10, 7) << 6 | rv_bf(c, 12, 11) << 4 | rv_b(c, 6) << 3 |            \
+   rv_b(c, 5) << 2) /* c-inst. CIW immediate for c.addi4spn */
+#define rv_cimm_cl(c)                                                          \
+  (rv_b(c, 5) << 6 | rv_bf(c, 12, 10) << 3 |                                   \
+   rv_b(c, 6) << 2) /* c-inst. CL immediate for c.lw/c.sw */
+#define rv_cimm_ci(c)                                                          \
+  (rv_signext(rv_b(c, 12), 0) << 5 |                                           \
+   rv_bf(c, 6, 2)) /* c-inst. CI immediate for c.addi/c.li/c.lui */
+#define rv_cimm_ci_b(c)                                                        \
+  (rv_signext(rv_b(c, 12), 0) << 9 | rv_bf(c, 4, 3) << 7 | rv_b(c, 5) << 6 |   \
+   rv_b(c, 2) << 5 |                                                           \
+   rv_b(c, 6) << 4) /* c-inst. CI immediate for c.addi16sp */
+#define rv_cimm_ci_c(c)                                                        \
+  (rv_bf(c, 3, 2) << 6 | rv_b(c, 12) << 5 |                                    \
+   rv_bf(c, 6, 4) << 2) /* c-inst. CI immediate for c.lwsp */
+#define rv_cimm_cj(c)                                                          \
+  (rv_signext(rv_b(c, 12), 0) << 11 | rv_b(c, 8) << 10 |                       \
+   rv_bf(c, 10, 9) << 8 | rv_b(c, 6) << 7 | rv_b(c, 7) << 6 |                  \
+   rv_b(c, 2) << 5 | rv_b(c, 11) << 4 |                                        \
+   rv_bf(c, 5, 3) << 1) /* c-inst. CJ immediate for c.jalr/c.j */
+#define rv_cimm_cb(c)                                                          \
+  (rv_signext(rv_b(c, 12), 0) << 8 | rv_bf(c, 6, 5) << 6 | rv_b(c, 2) << 5 |   \
+   rv_bf(c, 11, 10) << 3 |                                                     \
+   rv_bf(c, 4, 3) << 1) /* c-inst. CB immediate for c.beqz/c.bnez */
+#define rv_cimm_css(c)                                                         \
+  (rv_bf(c, 8, 7) << 6 | rv_bf(c, 12, 9)                                       \
+                             << 2) /* c-inst CSS immediate for c.swsp*/
 
+/* macros to make all instruction types */
 #define rv_i_i(op, f3, rd, rs1, imm)                                           \
   ((imm) << 20 | (rs1) << 15 | (f3) << 12 | (rd) << 7 | (op) << 2 | 3)
 #define rv_i_s(op, f3, rs1, rs2, imm)                                          \
-  (rv_ibf(imm, 11, 5) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 |         \
-   rv_ibf(imm, 4, 0) << 7 | (op) << 2 | 3)
+  (rv_bf(imm, 11, 5) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 |          \
+   rv_bf(imm, 4, 0) << 7 | (op) << 2 | 3)
 #define rv_i_u(op, rd, imm) ((imm) << 12 | (rd) << 7 | (op) << 2 | 3)
 #define rv_i_r(op, f3, rd, rs1, rs2, f7)                                       \
   ((f7) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 | (rd) << 7 |           \
    (op) << 2 | 3)
 #define rv_i_j(op, rd, imm)                                                    \
-  (rv_ib(imm, 20) << 31 | rv_ibf(imm, 10, 1) << 21 | rv_ib(imm, 11) << 20 |    \
-   rv_ibf(imm, 19, 12) << 12 | (rd) << 7 | (op) << 2 | 3)
+  (rv_b(imm, 20) << 31 | rv_bf(imm, 10, 1) << 21 | rv_b(imm, 11) << 20 |       \
+   rv_bf(imm, 19, 12) << 12 | (rd) << 7 | (op) << 2 | 3)
 #define rv_i_b(op, f3, rs1, rs2, imm)                                          \
-  (rv_ib(imm, 12) << 31 | rv_ibf(imm, 10, 5) << 25 | (rs2) << 20 |             \
-   (rs1) << 15 | (f3) << 12 | rv_ibf(imm, 4, 1) << 8 | rv_ib(imm, 11) << 7 |   \
-   (op) << 2 | 3)
+  (rv_b(imm, 12) << 31 | rv_bf(imm, 10, 5) << 25 | (rs2) << 20 | (rs1) << 15 | \
+   (f3) << 12 | rv_bf(imm, 4, 1) << 8 | rv_b(imm, 11) << 7 | (op) << 2 | 3)
 
-rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
+rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) { /* convert compressed to regular inst. */
   (void)c;
   if (rv_cop(c) == 0) {
     if (rv_cf3(c) == 0 && c != 0) { /* c.addi4spn -> addi rd', x2, nzuimm */
-      rv_u32 nzuimm = rv_ibf(c, 10, 7) << 6 | rv_ibf(c, 12, 11) << 4 |
-                      rv_ib(c, 6) << 3 | rv_ib(c, 5) << 2;
-      return rv_i_i(4, 0, rv_crp(rv_ibf(c, 4, 2)), 2, nzuimm);
+      return rv_i_i(4, 0, rv_crp(rv_bf(c, 4, 2)), 2, rv_cimm_ciw(c));
     } else if (c == 0) { /* illegal */
       return 0;
     } else if (rv_cf3(c) == 2) { /* c.lw -> lw rd', offset(rs1') */
-      rv_u32 imm = rv_ib(c, 5) << 6 | rv_ibf(c, 12, 10) << 3 | rv_ib(c, 6) << 2;
-      return rv_i_i(0, 2, rv_crp(rv_ibf(c, 4, 2)), rv_crp(rv_ibf(c, 9, 7)),
-                    imm);
+      return rv_i_i(0, 2, rv_crp(rv_bf(c, 4, 2)), rv_crp(rv_bf(c, 9, 7)),
+                    rv_cimm_cl(c));
     } else if (rv_cf3(c) == 6) { /* c.sw -> sw rs2', offset(rs1') */
-      rv_u32 imm = rv_ib(c, 5) << 6 | rv_ibf(c, 12, 10) << 3 | rv_ib(c, 6) << 2;
-      return rv_i_s(8, 2, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 4, 2)),
-                    imm);
+      return rv_i_s(8, 2, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 4, 2)),
+                    rv_cimm_cl(c));
     } else {
       unimp();
     }
   } else if (rv_cop(c) == 1) {
     if (rv_cf3(c) == 0) { /* c.addi -> addi rd, rd, nzimm */
-      rv_u32 nzimm =
-          (rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2)) & 0xFFF;
-      return rv_i_i(4, 0, rv_ibf(c, 11, 7), rv_ibf(c, 11, 7), nzimm);
+      return rv_i_i(4, 0, rv_bf(c, 11, 7), rv_bf(c, 11, 7), rv_cimm_ci(c));
     } else if (rv_cf3(c) == 1) { /* c.jal -> jal x1, offset */
-      rv_u32 offset = rv_signext(rv_ib(c, 12), 0) << 11 | rv_ib(c, 8) << 10 |
-                      rv_ibf(c, 10, 9) << 8 | rv_ib(c, 6) << 7 |
-                      rv_ib(c, 7) << 6 | rv_ib(c, 2) << 5 | rv_ib(c, 11) << 4 |
-                      rv_ibf(c, 5, 3) << 1;
-      return rv_i_j(27, 1, offset);
+      return rv_i_j(27, 1, rv_cimm_cj(c));
     } else if (rv_cf3(c) == 2) { /* c.li -> addi rd, x0, imm */
-      rv_u32 nzimm =
-          (rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2)) & 0xFFF;
-      return rv_i_i(4, 0, rv_ibf(c, 11, 7), 0, nzimm);
-    } else if (rv_cf3(c) == 3) {   /* 01/011: LUI/ADDI16SP */
-      if (rv_ibf(c, 11, 7) == 2) { /* c.addi16sp -> addi x2, x2, nzimm */
-        rv_u32 nzimm =
-            (rv_signext(rv_ib(c, 12), 0) << 9 | rv_ibf(c, 4, 3) << 7 |
-             rv_ib(c, 5) << 6 | rv_ib(c, 2) << 5 | rv_ib(c, 6) << 4) &
-            0xFFF;
-        return rv_i_i(4, 0, 2, 2, nzimm);
-      } else if (rv_ibf(c, 11, 7) != 0) { /* c.lui -> lui rd, nzimm */
-        rv_u32 nzimm = rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2);
-        return rv_i_u(13, rv_ibf(c, 11, 7), nzimm);
+      return rv_i_i(4, 0, rv_bf(c, 11, 7), 0, rv_cimm_ci(c));
+    } else if (rv_cf3(c) == 3) {  /* 01/011: LUI/ADDI16SP */
+      if (rv_bf(c, 11, 7) == 2) { /* c.addi16sp -> addi x2, x2, nzimm */
+        return rv_i_i(4, 0, 2, 2, rv_cimm_ci_b(c));
+      } else if (rv_bf(c, 11, 7) != 0) { /* c.lui -> lui rd, nzimm */
+        return rv_i_u(13, rv_bf(c, 11, 7), rv_cimm_ci(c));
       } else {
         unimp();
       }
-    } else if (rv_cf3(c) == 4) {    /* 01/100: MISC-ALU */
-      if (rv_ibf(c, 11, 10) == 0) { /* c.srli -> srli rd', rd', shamt */
-        rv_u32 shamt = rv_ib(c, 12) << 5 | rv_ibf(c, 6, 2);
-        return rv_i_r(4, 5, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
-                      shamt, 0);
-      } else if (rv_ibf(c, 11, 10) == 1) { /* c.srai -> srai rd', rd', shamt */
-        rv_u32 shamt = rv_ib(c, 12) << 5 | rv_ibf(c, 6, 2);
-        return rv_i_r(4, 5, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
-                      shamt, 32);
-      } else if (rv_ibf(c, 11, 10) == 2) { /* c.andi -> andi rd', rd', imm */
-        rv_u32 imm = rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2);
-        return rv_i_i(4, 7, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
-                      imm);
-      } else if (rv_ibf(c, 11, 10) == 3) {
-        if (rv_ibf(c, 6, 5) == 0) { /* c.sub -> sub rd', rd', rs2' */
-          return rv_i_r(12, 0, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
-                        rv_crp(rv_ibf(c, 4, 2)), 32);
-        } else if (rv_ibf(c, 6, 5) == 1) { /* c.xor -> xor rd', rd', rs2' */
-          return rv_i_r(12, 4, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
-                        rv_crp(rv_ibf(c, 4, 2)), 0);
-        } else if (rv_ibf(c, 6, 5) == 2) { /* c.or -> or rd', rd', rs2' */
-          return rv_i_r(12, 6, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
-                        rv_crp(rv_ibf(c, 4, 2)), 0);
-        } else if (rv_ibf(c, 6, 5) == 3) { /* c.and -> and rd', rd', rs2' */
-          return rv_i_r(12, 7, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
-                        rv_crp(rv_ibf(c, 4, 2)), 0);
+    } else if (rv_cf3(c) == 4) {   /* 01/100: MISC-ALU */
+      if (rv_bf(c, 11, 10) == 0) { /* c.srli -> srli rd', rd', shamt */
+        return rv_i_r(4, 5, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 9, 7)),
+                      rv_cimm_ci(c) & 0x1F, 0);
+      } else if (rv_bf(c, 11, 10) == 1) { /* c.srai -> srai rd', rd', shamt */
+        return rv_i_r(4, 5, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 9, 7)),
+                      rv_cimm_ci(c) & 0x1F, 32);
+      } else if (rv_bf(c, 11, 10) == 2) { /* c.andi -> andi rd', rd', imm */
+        return rv_i_i(4, 7, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 9, 7)),
+                      rv_cimm_ci(c));
+      } else if (rv_bf(c, 11, 10) == 3) {
+        if (rv_bf(c, 6, 5) == 0) { /* c.sub -> sub rd', rd', rs2' */
+          return rv_i_r(12, 0, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 9, 7)),
+                        rv_crp(rv_bf(c, 4, 2)), 32);
+        } else if (rv_bf(c, 6, 5) == 1) { /* c.xor -> xor rd', rd', rs2' */
+          return rv_i_r(12, 4, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 9, 7)),
+                        rv_crp(rv_bf(c, 4, 2)), 0);
+        } else if (rv_bf(c, 6, 5) == 2) { /* c.or -> or rd', rd', rs2' */
+          return rv_i_r(12, 6, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 9, 7)),
+                        rv_crp(rv_bf(c, 4, 2)), 0);
+        } else if (rv_bf(c, 6, 5) == 3) { /* c.and -> and rd', rd', rs2' */
+          return rv_i_r(12, 7, rv_crp(rv_bf(c, 9, 7)), rv_crp(rv_bf(c, 9, 7)),
+                        rv_crp(rv_bf(c, 4, 2)), 0);
         } else {
           unimp();
         }
@@ -324,47 +335,33 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
         unimp();
       }
     } else if (rv_cf3(c) == 5) { /* c.j -> jal x0, offset */
-      rv_u32 offset = rv_signext(rv_ib(c, 12), 0) << 11 | rv_ib(c, 8) << 10 |
-                      rv_ibf(c, 10, 9) << 8 | rv_ib(c, 6) << 7 |
-                      rv_ib(c, 7) << 6 | rv_ib(c, 2) << 5 | rv_ib(c, 11) << 4 |
-                      rv_ibf(c, 5, 3) << 1;
-      return rv_i_j(27, 0, offset);
+      return rv_i_j(27, 0, rv_cimm_cj(c));
     } else if (rv_cf3(c) == 6) { /* c.beqz -> beq rs1' x0, offset */
-      rv_u32 offset = rv_signext(rv_ib(c, 12), 0) << 8 | rv_ibf(c, 6, 5) << 6 |
-                      rv_ib(c, 2) << 5 | rv_ibf(c, 11, 10) << 3 |
-                      rv_ibf(c, 4, 3) << 1;
-      return rv_i_b(24, 0, rv_crp(rv_ibf(c, 9, 7)), 0, offset);
+      return rv_i_b(24, 0, rv_crp(rv_bf(c, 9, 7)), 0, rv_cimm_cb(c));
     } else if (rv_cf3(c) == 7) { /* c.bnez -> bne rs1' x0, offset */
-      rv_u32 offset = rv_signext(rv_ib(c, 12), 0) << 8 | rv_ibf(c, 6, 5) << 6 |
-                      rv_ib(c, 2) << 5 | rv_ibf(c, 11, 10) << 3 |
-                      rv_ibf(c, 4, 3) << 1;
-      return rv_i_b(24, 1, rv_crp(rv_ibf(c, 9, 7)), 0, offset);
+      return rv_i_b(24, 1, rv_crp(rv_bf(c, 9, 7)), 0, rv_cimm_cb(c));
     } else {
       unimp();
     }
   } else if (rv_cop(c) == 2) {
     if (rv_cf3(c) == 0) { /* c.slli -> slli rd, rd, shamt */
-      rv_u32 shamt = rv_ib(c, 12) << 5 | rv_ibf(c, 6, 2);
-      return rv_i_r(4, 1, rv_ibf(c, 11, 7), rv_ibf(c, 11, 7), shamt, 0);
+      return rv_i_r(4, 1, rv_bf(c, 11, 7), rv_bf(c, 11, 7),
+                    rv_cimm_ci(c) & 0x1F, 0);
     } else if (rv_cf3(c) == 2) { /* c.lwsp -> lw rd, offset(x2) */
-      rv_u32 offset =
-          rv_ibf(c, 3, 2) << 6 | rv_ib(c, 12) << 5 | rv_ibf(c, 6, 4) << 2;
-      return rv_i_i(0, 2, rv_ibf(c, 11, 7), 2, offset);
-    } else if (rv_cf3(c) == 4 && !rv_ib(c, 12) &&
-               !rv_ibf(c, 6, 2)) { /* c.jr -> jalr x0, 0(rs1) */
-      return rv_i_i(25, 0, 0, rv_ibf(c, 11, 7), 0);
-    } else if (rv_cf3(c) == 4 && !rv_ib(c, 12)) { /* c.mv -> add rd, x0, rs2 */
-      return rv_i_r(12, 0, rv_ibf(c, 11, 7), 0, rv_ibf(c, 6, 2), 0);
-    } else if (rv_cf3(c) == 4 && rv_ib(c, 12) && rv_ibf(c, 11, 7) &&
-               !rv_ibf(c, 6, 2)) { /* c.jalr -> jalr x1, 0(rs1) */
-      return rv_i_i(25, 0, 1, rv_ibf(c, 11, 7), 0);
-    } else if (rv_cf3(c) == 4 && rv_ib(c, 12) && rv_ibf(c, 11, 7) &&
-               rv_ibf(c, 6, 2)) { /* c.add -> add rd, rd, rs2 */
-      return rv_i_r(12, 0, rv_ibf(c, 11, 7), rv_ibf(c, 11, 7), rv_ibf(c, 6, 2),
-                    0);
+      return rv_i_i(0, 2, rv_bf(c, 11, 7), 2, rv_cimm_ci_c(c));
+    } else if (rv_cf3(c) == 4 && !rv_b(c, 12) &&
+               !rv_bf(c, 6, 2)) { /* c.jr -> jalr x0, 0(rs1) */
+      return rv_i_i(25, 0, 0, rv_bf(c, 11, 7), 0);
+    } else if (rv_cf3(c) == 4 && !rv_b(c, 12)) { /* c.mv -> add rd, x0, rs2 */
+      return rv_i_r(12, 0, rv_bf(c, 11, 7), 0, rv_bf(c, 6, 2), 0);
+    } else if (rv_cf3(c) == 4 && rv_b(c, 12) && rv_bf(c, 11, 7) &&
+               !rv_bf(c, 6, 2)) { /* c.jalr -> jalr x1, 0(rs1) */
+      return rv_i_i(25, 0, 1, rv_bf(c, 11, 7), 0);
+    } else if (rv_cf3(c) == 4 && rv_b(c, 12) && rv_bf(c, 11, 7) &&
+               rv_bf(c, 6, 2)) { /* c.add -> add rd, rd, rs2 */
+      return rv_i_r(12, 0, rv_bf(c, 11, 7), rv_bf(c, 11, 7), rv_bf(c, 6, 2), 0);
     } else if (rv_cf3(c) == 6) { /* c.swsp -> sw rs2, offset(x2) */
-      rv_u32 offset = rv_ibf(c, 8, 7) << 6 | rv_ibf(c, 12, 9) << 2;
-      return rv_i_s(8, 2, 2, rv_ibf(c, 6, 2), offset);
+      return rv_i_s(8, 2, 2, rv_bf(c, 6, 2), rv_cimm_css(c));
     } else {
       unimp();
     }
@@ -472,7 +469,7 @@ rv_u32 rv_inst(rv *cpu) {
   } else if (rv_iopl(i) == 3) {
     if (rv_ioph(i) == 0) {  /* 00/011: MISC-MEM */
       if (rv_if3(i) == 0) { /* fence */
-        rv_u32 fm = rv_ibf(i, 31, 28);
+        rv_u32 fm = rv_bf(i, 31, 28);
         if (fm && fm != 16) /* fm != 0000/1000 */
           return rv_except(cpu, RV_EILL);
       } else if (rv_if3(i) == 1) { /* fence.i */
@@ -490,7 +487,7 @@ rv_u32 rv_inst(rv *cpu) {
         rv_ioph(i) == 1) { /* 01/100: OP */
       rv_u32 a = rv_lr(cpu, rv_irs1(i));
       rv_u32 b = rv_ioph(i) ? rv_lr(cpu, rv_irs2(i)) : rv_iimm_i(i);
-      rv_u32 s = (rv_ioph(i) || rv_if3(i)) ? rv_ib(i, 30) : 0, sh = b & 0x1F;
+      rv_u32 s = (rv_ioph(i) || rv_if3(i)) ? rv_b(i, 30) : 0, sh = b & 0x1F;
       rv_u32 y;
       if (rv_if3(i) == 0) { /* add, addi, sub */
         y = s ? a - b : a + b;
@@ -499,7 +496,7 @@ rv_u32 rv_inst(rv *cpu) {
       } else if (rv_if3(i) == 2) { /* slt, slti */
         y = rv_ovf(a, b, a - b) != rv_sgn(a - b);
       } else if (rv_if3(i) == 3) { /* sltu, sltiu */
-        y = a - b > a;
+        y = (a - b) > a;
       } else if (rv_if3(i) == 4) { /* xor, xori */
         y = a ^ b;
       } else if (rv_if3(i) == 5) { /* srl, srli, sra, srai */
