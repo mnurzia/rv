@@ -231,6 +231,7 @@ rv_u32 rv_except(rv *cpu, rv_u32 cause) {
 #define rv_i_s(op, f3, rs1, rs2, imm)                                          \
   (rv_ibf(imm, 11, 5) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 |         \
    rv_ibf(imm, 4, 0) << 7 | (op) << 2 | 3)
+#define rv_i_u(op, rd, imm) ((imm) << 12 | (rd) << 7 | (op) << 2 | 3)
 
 rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
   (void)c;
@@ -268,6 +269,10 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
              rv_ib(c, 5) << 6 | rv_ib(c, 2) << 5 | rv_ib(c, 6) << 4) &
             0xFFF;
         return rv_i_i(4, 0, 2, 2, nzimm);
+      } else if (rv_ibf(c, 11, 7) != 0) { /* c.lui -> lui rd, nzimm */
+        rv_u32 nzimm = rv_signext(rv_ib(c, 12), 0) << 17 | rv_ibf(c, 6, 2)
+                                                               << 12;
+        return rv_i_u(13, rv_ibf(c, 11, 7), nzimm);
       } else {
         unimp();
       }
