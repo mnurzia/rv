@@ -346,11 +346,18 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
     if (rv_cf3(c) == 0) { /* c.slli -> slli rd, rd, shamt */
       rv_u32 shamt = rv_ib(c, 12) << 5 | rv_ibf(c, 6, 2);
       return rv_i_r(4, 1, rv_ibf(c, 11, 7), rv_ibf(c, 11, 7), shamt, 0);
+    } else if (rv_cf3(c) == 2) { /* c.lwsp -> lw rd, offset(x2) */
+      rv_u32 offset =
+          rv_ibf(c, 3, 2) << 6 | rv_ib(c, 12) << 5 | rv_ibf(c, 6, 4) << 2;
+      return rv_i_i(0, 2, rv_ibf(c, 11, 7), 2, offset);
     } else if (rv_cf3(c) == 4 && !rv_ib(c, 12)) { /* c.jr -> jalr x0, 0(rs1) */
       return rv_i_i(25, 0, 0, rv_ibf(c, 11, 7), 0);
     } else if (rv_cf3(c) == 4 && rv_ib(c, 12) &&
-               rv_ibf(c, 11, 7)) { /* c.jalr -> jalr x1, 0(rs1)*/
+               rv_ibf(c, 11, 7)) { /* c.jalr -> jalr x1, 0(rs1) */
       return rv_i_i(25, 0, 1, rv_ibf(c, 11, 7), 0);
+    } else if (rv_cf3(c) == 6) { /* c.swsp -> sw rs2, offset(x2) */
+      rv_u32 offset = rv_ibf(c, 8, 7) << 6 | rv_ibf(c, 12, 9) << 2;
+      return rv_i_s(8, 2, 2, rv_ibf(c, 6, 2), offset);
     } else {
       unimp();
     }
