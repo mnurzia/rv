@@ -238,6 +238,10 @@ rv_u32 rv_except(rv *cpu, rv_u32 cause) {
 #define rv_i_j(op, rd, imm)                                                    \
   (rv_ib(imm, 20) << 31 | rv_ibf(imm, 10, 1) << 21 | rv_ib(imm, 11) << 20 |    \
    rv_ibf(imm, 19, 12) << 12 | (rd) << 7 | (op) << 2 | 3)
+#define rv_i_b(op, f3, rs1, rs2, imm)                                          \
+  (rv_ib(imm, 12) << 31 | rv_ibf(imm, 10, 5) << 25 | (rs2) << 20 |             \
+   (rs1) << 15 | (f3) << 12 | rv_ibf(imm, 4, 1) << 8 | rv_ib(imm, 11) << 7 |   \
+   (op) << 2 | 3)
 
 rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
   (void)c;
@@ -319,6 +323,16 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
                       rv_ib(c, 7) << 6 | rv_ib(c, 2) << 5 | rv_ib(c, 11) << 4 |
                       rv_ibf(c, 5, 3) << 1;
       return rv_i_j(27, 0, offset);
+    } else if (rv_cf3(c) == 6) { /* c.beqz -> beq rs1' x0, offset */
+      rv_u32 offset = rv_signext(rv_ib(c, 12), 0) << 8 | rv_ibf(c, 6, 5) << 6 |
+                      rv_ib(c, 2) << 5 | rv_ibf(c, 11, 10) << 3 |
+                      rv_ibf(c, 4, 3) << 1;
+      return rv_i_b(24, 0, rv_crp(rv_ibf(c, 9, 7)), 0, offset);
+    } else if (rv_cf3(c) == 7) { /* c.bnez -> bne rs1' x0, offset */
+      rv_u32 offset = rv_signext(rv_ib(c, 12), 0) << 8 | rv_ibf(c, 6, 5) << 6 |
+                      rv_ib(c, 2) << 5 | rv_ibf(c, 11, 10) << 3 |
+                      rv_ibf(c, 4, 3) << 1;
+      return rv_i_b(24, 1, rv_crp(rv_ibf(c, 9, 7)), 0, offset);
     } else {
       unimp();
     }
