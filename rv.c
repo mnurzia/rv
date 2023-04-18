@@ -268,6 +268,12 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
       rv_u32 nzimm =
           (rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2)) & 0xFFF;
       return rv_i_i(4, 0, rv_ibf(c, 11, 7), rv_ibf(c, 11, 7), nzimm);
+    } else if (rv_cf3(c) == 1) { /* c.jal -> jal x1, offset */
+      rv_u32 offset = rv_signext(rv_ib(c, 12), 0) << 11 | rv_ib(c, 8) << 10 |
+                      rv_ibf(c, 10, 9) << 8 | rv_ib(c, 6) << 7 |
+                      rv_ib(c, 7) << 6 | rv_ib(c, 2) << 5 | rv_ib(c, 11) << 4 |
+                      rv_ibf(c, 5, 3) << 1;
+      return rv_i_j(27, 1, offset);
     } else if (rv_cf3(c) == 2) { /* c.li -> addi rd, x0, imm */
       rv_u32 nzimm =
           (rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2)) & 0xFFF;
