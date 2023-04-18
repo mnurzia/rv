@@ -291,6 +291,22 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
         rv_u32 imm = rv_signext(rv_ib(c, 12), 0) << 5 | rv_ibf(c, 6, 2);
         return rv_i_i(4, 7, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
                       imm);
+      } else if (rv_ibf(c, 11, 10) == 3) {
+        if (rv_ibf(c, 6, 5) == 0) { /* c.sub -> sub rd', rd', rs2' */
+          return rv_i_r(12, 0, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
+                        rv_crp(rv_ibf(c, 4, 2)), 32);
+        } else if (rv_ibf(c, 6, 5) == 1) { /* c.xor -> xor rd', rd', rs2' */
+          return rv_i_r(12, 4, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
+                        rv_crp(rv_ibf(c, 4, 2)), 0);
+        } else if (rv_ibf(c, 6, 5) == 2) { /* c.or -> or rd', rd', rs2' */
+          return rv_i_r(12, 6, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
+                        rv_crp(rv_ibf(c, 4, 2)), 0);
+        } else if (rv_ibf(c, 6, 5) == 3) { /* c.and -> and rd', rd', rs2' */
+          return rv_i_r(12, 7, rv_crp(rv_ibf(c, 9, 7)), rv_crp(rv_ibf(c, 9, 7)),
+                        rv_crp(rv_ibf(c, 4, 2)), 0);
+        } else {
+          unimp();
+        }
       } else {
         unimp();
       }
