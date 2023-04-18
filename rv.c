@@ -313,6 +313,13 @@ rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) {
     } else {
       unimp();
     }
+  } else if (rv_cop(c) == 2) {
+    if (rv_cf3(c) == 0) { /* c.slli -> slli rd, rd, shamt */
+      rv_u32 shamt = rv_ib(c, 12) << 5 | rv_ibf(c, 6, 2);
+      return rv_i_r(4, 1, rv_ibf(c, 11, 7), rv_ibf(c, 11, 7), shamt, 0);
+    } else {
+      unimp();
+    }
   } else {
     unimp();
   }
