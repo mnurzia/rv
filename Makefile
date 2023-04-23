@@ -3,7 +3,7 @@ RVOD := /opt/homebrew/opt/riscv-gnu-toolchain/bin/riscv64-unknown-elf-objdump
 RVOC := /opt/homebrew/opt/riscv-gnu-toolchain/bin/riscv64-unknown-elf-objcopy
 CC := clang
 
-all: bin/test_prog.bin bin/rv bin/test_prog.dmp
+all: bin/rt.bin bin/rv bin/rt.dmp
 
 bin:
 	mkdir -p bin
@@ -11,20 +11,21 @@ bin:
 tests:
 	mkdir -p tests
 
-bin/test_prog.o: bin test_prog.c rt.s link.ld
-	$(RVCC) -nostdlib -nostartfiles -Tlink.ld -march=rv32i -mabi=ilp32 -o bin/test_prog.o test_prog.c rt.s -e _start -O
+bin/rt.o: bin rt/main.c rt/rt.s link.ld
+	$(RVCC) -nostdlib -nostartfiles -Tlink.ld -march=rv32i -mabi=ilp32 -o bin/rt.o rt/main.c rt/rt.s -e _start -O -g -no-pie
 
-bin/test_prog.bin: bin bin/test_prog.o
-	$(RVOC) -O binary bin/test_prog.o bin/test_prog.bin
+bin/rt.bin: bin bin/rt.o
+	$(RVOC) -g -O binary bin/rt.o bin/rt.bin
 
-bin/test_prog.dmp: bin bin/test_prog.o
-	$(RVOD) -D -M no-aliases -M numeric bin/test_prog.o > bin/test_prog.dmp
+bin/rt.dmp: bin bin/rt.o
+	$(RVOC) -g bin/rt.o bin/rt-nodbg.o
+	$(RVOD) -D -M no-aliases -M numeric bin/rt-nodbg.o > bin/rt.dmp
 
 bin/rv: bin rv.c
 	$(CC) -o bin/rv rv.c -Wall -Werror --std=c89 -pedantic -Wextra -g
 
-dump: bin bin/test_prog.dmp
-	cat bin/test_prog.dmp
+dump: bin bin/rt.dmp
+	cat bin/rt.dmp
 
 test-files: tests
 	cp riscv-tests/isa/rv32ui-p-* tests
