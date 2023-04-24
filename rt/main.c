@@ -1,3 +1,12 @@
-void rv_trap(void);
+#include "rt.h"
 
-void rv_main(void) { rv_trap(); }
+void rt_main(void) {
+  if (rt_cpu() == 0) {
+    rt_sw(R_DFBB, 0x40000000);
+  } else {
+    while (1) {
+      rt_spin();
+    }
+  }
+  rt_trap();
+}

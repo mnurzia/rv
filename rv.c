@@ -561,6 +561,7 @@ rv_u32 rv_inst(rv *cpu) {
 }
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -572,6 +573,7 @@ rv_u32 rv_inst(rv *cpu) {
 #define RV_GDB_ERR_EOF -4
 #define RV_GDB_ERR_WRITE -5
 #define RV_GDB_ERR_READ -6
+#define RV_GDB_ERR_MTX -7
 
 typedef struct rv_gdb_hart rv_gdb_hart;
 
@@ -579,6 +581,8 @@ struct rv_gdb_hart {
   rv *cpu;
   rv_u32 state;
   rv_u32 next_state;
+  rv_u32 except;
+  rv_u32 need_send;
   const char *tid;
 };
 
@@ -596,6 +600,12 @@ typedef struct rv_gdb {
   rv_u8 *tx;
   rv_u32 tx_sz;
   rv_u32 tx_alloc;
+  rv_u32 *bp;
+  rv_u32 bp_sz;
+  rv_u32 tx_seq;
+  rv_u32 tx_ack;
+  rv_u32 rx_seq;
+  rv_u32 rx_ack;
   int sock;
 } rv_gdb;
 
@@ -617,6 +627,12 @@ int rv_gdb_init(rv_gdb *gdb, int sock) {
   gdb->tx_sz = 0;
   gdb->tx_alloc = 0;
   gdb->sock = sock;
+  gdb->bp = NULL;
+  gdb->bp_sz = 0;
+  gdb->tx_seq = 1; /* to handle first '+' */
+  gdb->tx_ack = 0;
+  gdb->rx_seq = 0;
+  gdb->rx_ack = 0;
   if (!(gdb->rx_pre = malloc(RV_GDB_BUF_ALLOC)))
     return RV_GDB_ERR_NOMEM;
   memset(gdb->rx_pre, 0, RV_GDB_BUF_ALLOC);
@@ -632,6 +648,8 @@ int rv_gdb_addhart(rv_gdb *gdb, rv *cpu, const char *tid) {
   gdb->harts[gdb->harts_sz].cpu = cpu;
   gdb->harts[gdb->harts_sz].tid = tid;
   gdb->harts[gdb->harts_sz].next_state = 0;
+  gdb->harts[gdb->harts_sz].except = 0;
+  gdb->harts[gdb->harts_sz].need_send = 0;
   gdb->harts[gdb->harts_sz++].state = 0;
   return 0;
 }
@@ -645,13 +663,20 @@ void rv_gdb_destroy(rv_gdb *gdb) {
     free(gdb->tx);
   if (gdb->harts)
     free(gdb->harts);
+  if (gdb->bp)
+    free(gdb->bp);
 }
 
 int rv_gdb_recv(rv_gdb *gdb) {
-  ssize_t rv = read(gdb->sock, gdb->rx_pre, RV_GDB_BUF_ALLOC);
+  ssize_t rv;
+reread:
+  rv = read(gdb->sock, gdb->rx_pre, RV_GDB_BUF_ALLOC);
   assert(rv <= RV_GDB_BUF_ALLOC);
-  if (rv <= 0)
+  if (rv <= 0) {
+    if (errno == EINTR)
+      goto reread;
     return RV_GDB_ERR_READ;
+  }
   gdb->rx_pre_sz = (rv_u32)rv;
   gdb->rx_pre_ptr = 0;
   return 0;
@@ -735,8 +760,11 @@ int rv_gdb_tx_s(rv_gdb *gdb, const char *s) {
 int rv_gdb_tx_begin(rv_gdb *gdb) {
   int err;
   gdb->tx_sz = 0;
-  if ((err = rv_gdb_tx(gdb, '+')))
-    return err;
+  if (gdb->rx_ack < gdb->rx_seq) {
+    if ((err = rv_gdb_tx(gdb, '+')))
+      return err;
+    gdb->rx_ack++;
+  }
   if ((err = rv_gdb_tx(gdb, '$')))
     return err;
   return 0;
@@ -757,7 +785,7 @@ int rv_gdb_tx_end(rv_gdb *gdb) {
     return err;
   if (write(gdb->sock, gdb->tx, gdb->tx_sz) != gdb->tx_sz)
     return RV_GDB_ERR_WRITE;
-  printf("[Tx] %s %u\n", gdb->tx, gdb->tx_sz);
+  printf("[Tx] %s %u\n", gdb->tx, ++gdb->tx_seq);
   return 0;
 }
 
@@ -794,6 +822,7 @@ int rv_gdb_rx_h(rv_gdb *gdb, rv_u32 *v, unsigned int ndig, int le) {
       out |= (rv_u32)err << (dig_idx * 4);
     }
   }
+  err = 0;
   *v = out;
   return err;
 error:
@@ -855,27 +884,47 @@ int rv_gdb_tx_sh(rv_gdb *gdb, rv_u8 *buf) {
 #define RV_GDB_STEP 1
 #define RV_GDB_CONTINUE 2
 
+rv_u32 rv_gdb_cvt_sig(rv_u32 except) {
+  if (except == RV_EIFAULT || except == RV_ELFAULT || except == RV_ESFAULT)
+    return 10; /* SIGBUS */
+  else if (except == RV_EIALIGN || except == RV_ELALIGN || except == RV_ESALIGN)
+    return 10; /* SIGBUS */
+  else if (except == RV_EBREAK)
+    return 5; /* SIGTRAP */
+  else if (except == RV_EILL)
+    return 4; /* SIGILL */
+  else
+    return 6; /* SIGABRT */
+}
+
 int rv_gdb_stop(rv_gdb *gdb) {
   int err = 0;
   rv_u32 i;
-  if ((err = rv_gdb_tx_begin(gdb)))
-    return err;
-  if ((err = rv_gdb_tx(gdb, 'T')))
-    return err;
-  if ((err = rv_gdb_tx_h(gdb, 5, 2, 0)))
-    return err;
   for (i = 0; i < gdb->harts_sz; i++) {
-    if (gdb->harts[i].state)
+    rv_gdb_hart *h = gdb->harts + i;
+    if (!h->need_send) /* sent stop status */
       continue;
+    if ((err = rv_gdb_tx_begin(gdb)))
+      return err;
+    if ((err = rv_gdb_tx(gdb, 'T')))
+      return err;
+    if ((err = rv_gdb_tx_h(gdb, rv_gdb_cvt_sig(h->except), 2, 0)))
+      return err;
     if ((err = rv_gdb_tx_s(gdb, "thread:")))
       return err;
     if ((err = rv_gdb_tx(gdb, rv_gdb_num2hex((rv_u8)i + 1))))
       return err;
     if ((err = rv_gdb_tx(gdb, ';')))
       return err;
+    if ((err = rv_gdb_tx_end(gdb)))
+      return err;
+    h->need_send = 0;
+    break;
   }
-  if ((err = rv_gdb_tx_end(gdb)))
-    return err;
+  for (i = 0; i < gdb->harts_sz; i++) {
+    if (gdb->harts[i].need_send)
+      return 1;
+  }
   return err;
 }
 
@@ -907,6 +956,16 @@ int rv_gdb_packet(rv_gdb *gdb) {
     if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "OK")) ||
         (err = rv_gdb_tx_end(gdb)))
       return err;
+  } else if (c == 'T') { /* is thread alive */
+    if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "OK")) ||
+        (err = rv_gdb_tx_end(gdb)))
+      return err;
+  } else if (c == 'Z' || c == 'z') { /* breakpoint */
+    if ((err = rv_gdb_rx(gdb, &c)))  /* kind */
+      return err;
+    if (c != '0')
+      return RV_GDB_ERR_FMT;
+
   } else if (c == 'c' || c == 's') { /* continue/step */
     rv_u32 addr = 0;
     if ((err = rv_gdb_rx_svwh(gdb, &addr) >= 0)) {
@@ -1015,8 +1074,6 @@ int rv_gdb_packet(rv_gdb *gdb) {
         return err;
     } else if (rv_gdb_rx_pre(gdb, "Cont")) { /* vCont */
       rv_u32 i;
-      if ((err = rv_gdb_tx_begin(gdb)))
-        return err;
       for (i = 0; i < gdb->harts_sz; i++) {
         gdb->harts[i].next_state = 0;
       }
@@ -1058,13 +1115,12 @@ int rv_gdb_packet(rv_gdb *gdb) {
             return RV_GDB_ERR_FMT;
           if ((!tid || (i == tid - 1)) &&
               !gdb->harts[i].next_state) { /* write state to hart */
+            printf("[vCont] setting thread %u state to %u\n", i, state);
             gdb->harts[i].state = state;
             gdb->harts[i].next_state = 1;
           }
         }
       }
-      if ((err = rv_gdb_tx_end(gdb)))
-        return err;
       return 1;
     } else if (rv_gdb_rx_pre(gdb, "Kill")) { /* kill, ignore pid for now */
       if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_end(gdb))) /* ack */
@@ -1085,21 +1141,21 @@ int rv_gdb_proc(rv_gdb *gdb) {
   rv_u8 cksum = 0;
   gdb->rx_sz = 0;
   gdb->rx_ptr = 0;
+ack:
   if ((err = rv_gdb_in(gdb, &c)))
     return err;
-  if (c != '+')
-    return RV_GDB_ERR_FMT;
-skipack:
-  if ((err = rv_gdb_in(gdb, &c)))
-    return err;
-  if (c == '+')
-    goto skipack;
+  if (c == '+') {
+    assert(gdb->tx_ack != gdb->tx_seq);
+    gdb->tx_ack++;
+    goto ack;
+  }
   if (c != '$')
     return RV_GDB_ERR_FMT;
   while (1) {
     if ((err = rv_gdb_in(gdb, &c)))
       return err;
     if (c == '#') { /* packet end */
+      gdb->rx_seq++;
       if ((err = rv_gdb_next_hex(gdb, &c)))
         return err;
       if (c != cksum)
@@ -1126,13 +1182,57 @@ skipack:
   return 0;
 }
 
-typedef struct mapper {
+#include <pthread.h>
+
+typedef pthread_mutex_t game_mutex;
+
+int game_mutex_init(game_mutex *mtx) {
+  if (pthread_mutex_init(mtx, NULL))
+    return RV_GDB_ERR_MTX;
+  return 0;
+}
+
+void game_mutex_destroy(game_mutex *mtx) { pthread_mutex_destroy(mtx); }
+
+typedef struct game_regs {
+  rv_u32 dfbb;
+  rv_u32 dfbm;
+} game_regs;
+
+typedef struct game {
   rv_u8 *rom;
   rv_u8 *ram;
-} mapper;
+  game_regs regs;
+  game_mutex video_lock;
+} game;
+
+int game_init(game *gm, const char *rom) {
+  int fd = open(rom, O_RDONLY);
+  gm->rom = NULL;
+  gm->ram = NULL;
+  assert(!game_mutex_init(&gm->video_lock));
+  memset(&gm->regs, 0, sizeof(game_regs));
+  gm->rom = malloc(sizeof(rv_u8) * 0x10000);
+  if (!gm->rom)
+    return RV_GDB_ERR_NOMEM;
+  gm->ram = malloc(sizeof(rv_u8) * 0x1000000);
+  if (!gm->ram)
+    return RV_GDB_ERR_NOMEM;
+  memset(gm->rom, 0, 0x10000);
+  memset(gm->ram, 0, 0x1000000);
+  read(fd, gm->rom, 0x10000);
+  return 0;
+}
+
+void game_destroy(game *gm) {
+  if (gm->rom)
+    free(gm->rom);
+  if (gm->ram)
+    free(gm->ram);
+}
 
 rv_res load_cb(void *user, rv_u32 addr) {
-  mapper *m = (mapper *)user;
+  game *m = (game *)user;
   if (addr >= 0x80000000 && addr <= 0xBFFFFFFF) {
     return m->rom[(addr - 0x80000000) & ~(rv_u32)(0x10000)];
   } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
@@ -1142,7 +1242,7 @@ rv_res load_cb(void *user, rv_u32 addr) {
 }
 
 rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
-  mapper *m = (mapper *)user;
+  game *m = (game *)user;
   if (addr >= 0x80000000 && addr <= 0xBFFFFFFF) {
     return RV_BAD;
   } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
@@ -1151,7 +1251,7 @@ rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
   }
   return RV_BAD;
 }
-
+#if 0
 int main(int argc, const char **argv) {
   int sock, new;
   struct sockaddr_in addr;
@@ -1183,7 +1283,7 @@ int main(int argc, const char **argv) {
   }
   {
     const char *bn = argv[1];
-    mapper map;
+    game map;
     int fd = open(bn, O_RDONLY);
     rv_u32 i = 0;
     int err = 0;
@@ -1210,20 +1310,33 @@ int main(int argc, const char **argv) {
     while (1) {
       while (!(err = rv_gdb_proc(&gdb))) {
       }
-      assert(err > 0);
       if (err == 2) /* vKill */
         break;
+      assert(err > 0);
+      /* send pending stop events */
+      if ((err = rv_gdb_stop(&gdb)) == 1) {
+        continue; /* get acks for those */
+      } else if (err) {
+        exit(1);
+      }
     cont:
       for (i = 0; i < gdb.harts_sz; i++) {
         rv_gdb_hart *h = gdb.harts + i;
         rv_u32 inst_out;
         if (h->state == RV_GDB_CONTINUE) {
           if ((inst_out = rv_inst(h->cpu))) {
+            h->except = inst_out - 1;
             h->state = RV_GDB_STOP;
+            h->need_send = 1;
           }
         } else if (h->state == RV_GDB_STEP) {
-          rv_inst(h->cpu);
+          if ((inst_out = rv_inst(h->cpu))) {
+            h->except = inst_out - 1;
+          }
           h->state = RV_GDB_STOP;
+          h->need_send = 1;
+        } else {
+          h->need_send = 1;
         }
       }
       for (i = 0; i < gdb.harts_sz; i++) {
@@ -1232,12 +1345,61 @@ int main(int argc, const char **argv) {
       }
       goto cont;
     stop:
-      assert(!rv_gdb_stop(&gdb));
+      rv_gdb_stop(&gdb);
     }
     rv_gdb_destroy(&gdb);
   }
 
   close(new);
   shutdown(sock, SHUT_RDWR);
+  return 0;
+}
+#endif
+
+#include <SDL2/SDL.h>
+
+#define W 854
+#define H 480
+
+/* threads:
+ * debug (main thread)
+ * cpu[0-3]
+ * video
+ * audio */
+
+int main(void) {
+  if (SDL_Init(SDL_INIT_VIDEO) < 0)
+    return EXIT_FAILURE;
+  else {
+    SDL_Window *win =
+        SDL_CreateWindow("SDL2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                         854, 480, SDL_WINDOW_SHOWN);
+    SDL_Renderer *r = SDL_CreateRenderer(win, -1, 0);
+    SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+                                       SDL_TEXTUREACCESS_STREAMING, W, H);
+    unsigned int *pix = malloc(W * H * 4);
+    int run = 1;
+    int i = 0;
+    while (run) {
+      void *locked_pix;
+      int pitch = 0;
+      SDL_Event ev;
+      while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_QUIT) {
+          run = 0;
+          break;
+        }
+      }
+      memset(pix, i, W * H * 4);
+      SDL_LockTexture(t, NULL, &locked_pix, &pitch);
+      memcpy(locked_pix, pix, W * H * 4);
+      SDL_UnlockTexture(t);
+      SDL_RenderCopy(r, t, NULL, NULL);
+      SDL_RenderPresent(r);
+    }
+    SDL_DestroyRenderer(r);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+  }
   return 0;
 }
