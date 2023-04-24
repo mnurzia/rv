@@ -22,7 +22,7 @@ bin/rt.dmp: bin bin/rt.o
 	$(RVOD) -D -M no-aliases -M numeric bin/rt-nodbg.o > bin/rt.dmp
 
 bin/rv: bin rv.c
-	$(CC) -o bin/rv rv.c -Wall -Werror --std=c89 -pedantic -Wextra -g
+	$(CC) -o bin/rv rv.c -Wall -Werror --std=c89 -pedantic -Wextra -g -fsanitize=address
 
 dump: bin bin/rt.dmp
 	cat bin/rt.dmp

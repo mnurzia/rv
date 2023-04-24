@@ -14,6 +14,7 @@ typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr);
 typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
 
 typedef struct rv_csrs {
+  rv_u32 mhartid;
   rv_u32 mstatus;
   rv_u32 mstatush;
   rv_u32 mscratch;
@@ -57,23 +58,6 @@ void rv_dump(rv *cpu) {
 
 #define RV_BAD ((rv_res)1 << 32);
 #define rv_isbad(x) (x >> 32)
-
-rv_res load_cb(void *user, rv_u32 addr) {
-  if (addr >= 0x80000000 && addr < 0x80010000) {
-    return ((rv_u8 *)user)[addr - 0x80000000];
-  } else {
-    return RV_BAD;
-  }
-}
-
-rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
-  if (addr >= 0x80000000 && addr < 0x80010000) {
-    ((rv_u8 *)user)[addr - 0x80000000] = data;
-    return 0;
-  } else {
-    return RV_BAD;
-  }
-}
 
 rv_res rv_lb(rv *cpu, rv_u32 addr) { return cpu->load_cb(cpu->user, addr); }
 
@@ -154,7 +138,7 @@ void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) { /* store register */
 rv_res rv_lcsr(rv *cpu, rv_u32 csr) { /* load csr */
   printf("(LCSR) %04X\n", csr);
   if (csr == 0xF14) { /* mhartid */
-    return 0;
+    return cpu->csrs.mhartid;
   } else if (csr == 0x305) { /* mtvec */
     return cpu->csrs.mtvec;
   } else if (csr == 0x740) { /* mnscratch */
@@ -582,8 +566,18 @@ rv_u32 rv_inst(rv *cpu) {
 #include <sys/socket.h>
 #include <unistd.h>
 
-typedef struct rv_gdb {
+typedef struct rv_gdb_hart rv_gdb_hart;
+
+struct rv_gdb_hart {
   rv *cpu;
+  rv_u32 stop_reason;
+  const char *tid;
+};
+
+typedef struct rv_gdb {
+  rv_gdb_hart *harts;
+  rv_u32 harts_sz;
+  rv_u32 hart_idx;
   rv_u32 stop_reason;
   rv_u8 *rx_pre;
   rv_u32 rx_pre_ptr;
@@ -600,9 +594,11 @@ typedef struct rv_gdb {
 
 #define RV_GDB_BUF_ALLOC 1024
 
-int rv_gdb_init(rv_gdb *gdb, rv *cpu, int sock) {
+int rv_gdb_init(rv_gdb *gdb, int sock) {
   assert(sock);
-  gdb->cpu = cpu;
+  gdb->harts = NULL;
+  gdb->harts_sz = 0;
+  gdb->hart_idx = 0;
   gdb->stop_reason = 0;
   gdb->rx_pre = NULL;
   gdb->rx_pre_ptr = 0;
@@ -621,6 +617,18 @@ int rv_gdb_init(rv_gdb *gdb, rv *cpu, int sock) {
   return 0;
 }
 
+int rv_gdb_addhart(rv_gdb *gdb, rv *cpu, const char *tid) {
+  rv_gdb_hart *harts =
+      realloc(gdb->harts, (gdb->harts_sz + 1) * sizeof(rv_gdb_hart));
+  if (!harts)
+    return -1;
+  gdb->harts = harts;
+  gdb->harts[gdb->harts_sz].cpu = cpu;
+  gdb->harts[gdb->harts_sz].tid = tid;
+  gdb->harts[gdb->harts_sz++].stop_reason = 0;
+  return 0;
+}
+
 void rv_gdb_destroy(rv_gdb *gdb) {
   if (gdb->rx_pre)
     free(gdb->rx_pre);
@@ -628,6 +636,8 @@ void rv_gdb_destroy(rv_gdb *gdb) {
     free(gdb->rx);
   if (gdb->tx)
     free(gdb->tx);
+  if (gdb->harts)
+    free(gdb->harts);
 }
 
 int rv_gdb_recv(rv_gdb *gdb) {
@@ -783,7 +793,7 @@ int rv_gdb_rx_h(rv_gdb *gdb, rv_u32 *v, unsigned int ndig, int le) {
   return err;
 }
 
-int rv_gdb_rx_sh(rv_gdb *gdb, rv_u32 *v) {
+int rv_gdb_rx_svwh(rv_gdb *gdb, rv_u32 *v) {
   int err = 0;
   rv_u32 out = 0;
   int i = 0;
@@ -815,22 +825,44 @@ int rv_gdb_tx_h(rv_gdb *gdb, rv_u32 v, unsigned int ndig, int le) {
   return err;
 }
 
+int rv_gdb_tx_sh(rv_gdb *gdb, rv_u8 *buf) {
+  int err = 0;
+  while (*buf) {
+    if ((err = rv_gdb_tx_h(gdb, *(buf++), 2, 0)))
+      return err;
+  }
+  return err;
+}
+
 #define RV_GDB_MORE 0
 #define RV_GDB_STEP 1
 #define RV_GDB_CONTINUE 2
 
 int rv_gdb_stop(rv_gdb *gdb) {
   int err = 0;
+  rv_u32 i;
   if ((err = rv_gdb_tx_begin(gdb)))
     return err;
-  if ((err = rv_gdb_tx(gdb, 'S')))
+  if ((err = rv_gdb_tx(gdb, 'T')))
     return err;
-  if ((err = rv_gdb_tx_h(gdb, gdb->stop_reason, 2, 0)))
-    return err;
+  for (i = 0; i < gdb->harts_sz; i++) {
+    if (!gdb->harts[i].stop_reason)
+      continue;
+    if ((err = rv_gdb_tx_h(gdb, gdb->harts[i].stop_reason, 2, 0)))
+      return err;
+    if ((err = rv_gdb_tx_s(gdb, "thread:")))
+      return err;
+    if ((err = rv_gdb_tx(gdb, rv_gdb_num2hex((rv_u8)i + 1))))
+      return err;
+    if ((err = rv_gdb_tx(gdb, ';')))
+      return err;
+  }
   if ((err = rv_gdb_tx_end(gdb)))
     return err;
   return err;
 }
+
+rv *rv_gdb_cpu(rv_gdb *gdb) { return gdb->harts[gdb->hart_idx].cpu; }
 
 int rv_gdb_packet(rv_gdb *gdb) {
   rv_u8 c;
@@ -840,18 +872,28 @@ int rv_gdb_packet(rv_gdb *gdb) {
     return err;
   if (c == '?') { /* stop reason -> run until stop */
     return RV_GDB_CONTINUE;
-  } else if (c == 'H') {            /* set current thread */
+  } else if (c == 'H') { /* set current thread */
+    rv_u32 tid = 0;
     if ((err = rv_gdb_rx(gdb, &c))) /* get command {c, g} */
       return err;
-    if (c == 'c' || c == 'g') /* set thrd for step/cont: deprecated */
+    if (c == 'c')
       (void)0;
+    if (c == 'g') { /* set thrd for step/cont: deprecated */
+      if ((err = rv_gdb_rx_svwh(gdb, &tid)))
+        return err;
+      if (!tid) /* 0: select any thread, we prefer cpu0 */
+        tid += 1;
+      if (tid > gdb->harts_sz)
+        return -1;
+      gdb->hart_idx = tid - 1;
+    }
     if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "OK")) ||
         (err = rv_gdb_tx_end(gdb)))
       return err;
   } else if (c == 'c' || c == 's') { /* continue/step */
     rv_u32 addr = 0;
-    if ((err = rv_gdb_rx_sh(gdb, &addr) >= 0)) {
-      gdb->cpu->ip = addr;
+    if ((err = rv_gdb_rx_svwh(gdb, &addr) >= 0)) {
+      rv_gdb_cpu(gdb)->ip = addr;
     }
     return c == 'c' ? RV_GDB_CONTINUE : RV_GDB_STEP;
   } else if (c == 'g') { /* general registers */
@@ -859,23 +901,23 @@ int rv_gdb_packet(rv_gdb *gdb) {
     if ((err = rv_gdb_tx_begin(gdb)))
       return err;
     for (i = 0; i < 32; i++)
-      if ((err = rv_gdb_tx_h(gdb, gdb->cpu->r[i], 8, 1)))
+      if ((err = rv_gdb_tx_h(gdb, rv_gdb_cpu(gdb)->r[i], 8, 1)))
         return err;
-    if ((err = rv_gdb_tx_h(gdb, gdb->cpu->ip, 8, 1)))
+    if ((err = rv_gdb_tx_h(gdb, rv_gdb_cpu(gdb)->ip, 8, 1)))
       return err;
     if ((err = rv_gdb_tx_end(gdb)))
       return err;
   } else if (c == 'm') { /* read memory */
     rv_u32 addr = 0, size = 0, i;
     rv_res res;
-    if ((err = rv_gdb_rx_sh(gdb, &addr)))
+    if ((err = rv_gdb_rx_svwh(gdb, &addr)))
       return err;
-    if ((err = rv_gdb_rx_sh(gdb, &size)))
+    if ((err = rv_gdb_rx_svwh(gdb, &size)))
       return err;
     if ((err = rv_gdb_tx_begin(gdb)))
       return err;
     for (i = 0; i < size; i++) {
-      res = gdb->cpu->load_cb(gdb->cpu->user, addr + i);
+      res = rv_gdb_cpu(gdb)->load_cb(rv_gdb_cpu(gdb)->user, addr + i);
       if (rv_isbad(res))
         break;
       else if ((err = rv_gdb_tx_h(gdb, (rv_u32)res, 2, 0)))
@@ -891,8 +933,18 @@ int rv_gdb_packet(rv_gdb *gdb) {
       if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_end(gdb)))
         return err;
     } else if (rv_gdb_rx_pre(gdb, "fThreadInfo")) { /* thread list */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "m0")) ||
-          (err = rv_gdb_tx_end(gdb)))
+      rv_u8 i;
+      if ((err = rv_gdb_tx_begin(gdb)))
+        return err;
+      if ((err = rv_gdb_tx(gdb, 'm')))
+        return err;
+      for (i = 0; i < gdb->harts_sz; i++) {
+        if (i && (err = rv_gdb_tx(gdb, ',')))
+          return err;
+        if ((rv_gdb_tx(gdb, rv_gdb_num2hex(i + 1))))
+          return err;
+      }
+      if ((err = rv_gdb_tx_end(gdb)))
         return err;
     } else if (rv_gdb_rx_pre(gdb, "sThreadInfo")) { /* thread list stop */
       if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "l")) ||
@@ -903,7 +955,8 @@ int rv_gdb_packet(rv_gdb *gdb) {
           (err = rv_gdb_tx_end(gdb)))
         return err;
     } else if (rv_gdb_rx_pre(gdb, "C")) { /* return thread id */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "QC0")) ||
+      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "QC")) ||
+          (err = rv_gdb_tx(gdb, rv_gdb_num2hex((rv_u8)gdb->hart_idx + 1))) ||
           (err = rv_gdb_tx_end(gdb)))
         return err;
     } else if (rv_gdb_rx_pre(gdb, "Offsets")) { /* section offsets */
@@ -915,6 +968,18 @@ int rv_gdb_packet(rv_gdb *gdb) {
       if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "OK")) ||
           (err = rv_gdb_tx_end(gdb)))
         return err;
+    } else if (rv_gdb_rx_pre(gdb, "ThreadExtraInfo,")) {
+      rv_u32 tid = 0;
+      if ((err = rv_gdb_rx_svwh(gdb, &tid)))
+        return err;
+      if (!tid || tid > gdb->harts_sz)
+        return -1;
+      if ((err = rv_gdb_tx_begin(gdb)) ||
+          (err = rv_gdb_tx_sh(gdb, (rv_u8 *)(gdb->harts[tid - 1].tid))) ||
+          (err = rv_gdb_tx_end(gdb)))
+        return err;
+      return 0;
+      return -1;
     } else {
       assert(0);
     }
@@ -978,6 +1043,32 @@ int rv_gdb_proc(rv_gdb *gdb) {
   return 0;
 }
 
+typedef struct mapper {
+  rv_u8 *rom;
+  rv_u8 *ram;
+} mapper;
+
+rv_res load_cb(void *user, rv_u32 addr) {
+  mapper *m = (mapper *)user;
+  if (addr >= 0x80000000 && addr <= 0xBFFFFFFF) {
+    return m->rom[(addr - 0x80000000) & ~(rv_u32)(0x10000)];
+  } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
+    return m->ram[addr - 0x40000000];
+  }
+  return RV_BAD;
+}
+
+rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
+  mapper *m = (mapper *)user;
+  if (addr >= 0x80000000 && addr <= 0xBFFFFFFF) {
+    return RV_BAD;
+  } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
+    m->ram[addr - 0x40000000] = data;
+    return 0;
+  }
+  return RV_BAD;
+}
+
 int main(int argc, const char **argv) {
   int sock, new;
   struct sockaddr_in addr;
@@ -993,30 +1084,44 @@ int main(int argc, const char **argv) {
 
   if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
     perror("bind failed");
+    shutdown(sock, SHUT_RDWR);
     exit(EXIT_FAILURE);
   }
   if (listen(sock, 3) < 0) {
     perror("listen");
+    shutdown(sock, SHUT_RDWR);
     exit(EXIT_FAILURE);
   }
   if ((new = accept(sock, (struct sockaddr *)&addr, (socklen_t *)&addrlen)) <
       0) {
     perror("accept");
+    shutdown(sock, SHUT_RDWR);
     exit(EXIT_FAILURE);
   }
   {
     const char *bn = argv[1];
-    rv_u8 *mem = malloc(sizeof(rv_u8) * 0x10000);
+    mapper map;
     int fd = open(bn, O_RDONLY);
-    rv cpu;
+    int i = 0;
+    rv cpus[4];
     rv_gdb gdb;
+    map.rom = malloc(sizeof(rv_u8) * 0x10000);
+    map.ram = malloc(sizeof(rv_u8) * 0x1000000);
     (void)(argc);
     (void)(argv);
-    assert(mem);
-    memset(mem, 0, 0x10000);
-    read(fd, mem, 0x10000);
-    rv_init(&cpu, (void *)mem, &load_cb, &store_cb);
-    assert(!rv_gdb_init(&gdb, &cpu, new));
+    assert(map.rom);
+    assert(map.ram);
+    memset(map.rom, 0, 0x10000);
+    memset(map.ram, 0, 0x1000000);
+    read(fd, map.rom, 0x10000);
+    for (i = 0; i < 4; i++) {
+      rv_init(cpus + i, (void *)&map, &load_cb, &store_cb);
+    }
+    assert(!rv_gdb_init(&gdb, new));
+    assert(!rv_gdb_addhart(&gdb, cpus + 0, "cpu0"));
+    assert(!rv_gdb_addhart(&gdb, cpus + 1, "cpu1"));
+    assert(!rv_gdb_addhart(&gdb, cpus + 2, "gpu"));
+    assert(!rv_gdb_addhart(&gdb, cpus + 3, "spu"));
     while (1) {
       int gdb_rv = rv_gdb_proc(&gdb);
       assert(gdb_rv >= 0);
@@ -1024,13 +1129,13 @@ int main(int argc, const char **argv) {
         continue;
       else if (gdb_rv == RV_GDB_CONTINUE) {
         rv_u32 inst_out = 0;
-        while (!(inst_out = rv_inst(&cpu))) {
+        while (!(inst_out = rv_inst(gdb.harts[gdb.hart_idx].cpu))) {
         }
-        gdb.stop_reason = 5; /* trap */
+        gdb.harts[gdb.hart_idx].stop_reason = 5; /* trap */
         assert(!rv_gdb_stop(&gdb));
       } else if (gdb_rv == RV_GDB_STEP) {
-        rv_inst(&cpu);
-        gdb.stop_reason = 0; /* none - single stepped */
+        rv_inst(gdb.harts[gdb.hart_idx].cpu);
+        gdb.harts[gdb.hart_idx].stop_reason = 0; /* none - single stepped */
         assert(!rv_gdb_stop(&gdb));
       }
     }

@@ -1,6 +1,3 @@
 void rv_trap(void);
 
-void rv_main() {
-  rv_trap();
-  return;
-}
+void rv_main(void) { rv_trap(); }
