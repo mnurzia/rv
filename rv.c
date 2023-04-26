@@ -575,6 +575,10 @@ rv_u32 rv_inst(rv *cpu) {
 #define RV_GDB_ERR_READ -6
 #define RV_GDB_ERR_MTX -7
 
+#define RV_GDB_STOP 0
+#define RV_GDB_STEP 1
+#define RV_GDB_CONTINUE 2
+
 typedef struct rv_gdb_hart rv_gdb_hart;
 
 struct rv_gdb_hart {
@@ -650,7 +654,7 @@ int rv_gdb_addhart(rv_gdb *gdb, rv *cpu, const char *tid) {
   gdb->harts[gdb->harts_sz].next_state = 0;
   gdb->harts[gdb->harts_sz].except = 0;
   gdb->harts[gdb->harts_sz].need_send = 0;
-  gdb->harts[gdb->harts_sz++].state = 0;
+  gdb->harts[gdb->harts_sz++].state = RV_GDB_CONTINUE;
   return 0;
 }
 
@@ -880,11 +884,10 @@ int rv_gdb_tx_sh(rv_gdb *gdb, rv_u8 *buf) {
   return err;
 }
 
-#define RV_GDB_STOP 0
-#define RV_GDB_STEP 1
-#define RV_GDB_CONTINUE 2
-
 rv_u32 rv_gdb_cvt_sig(rv_u32 except) {
+  if (!except)
+    return 0; /* none */
+  except -= 1;
   if (except == RV_EIFAULT || except == RV_ELFAULT || except == RV_ESFAULT)
     return 10; /* SIGBUS */
   else if (except == RV_EIALIGN || except == RV_ELALIGN || except == RV_ESALIGN)
@@ -1194,49 +1197,103 @@ int game_mutex_init(game_mutex *mtx) {
 
 void game_mutex_destroy(game_mutex *mtx) { pthread_mutex_destroy(mtx); }
 
+void game_mutex_lock(game_mutex *mtx) { assert(!pthread_mutex_lock(mtx)); }
+
+void game_mutex_unlock(game_mutex *mtx) { assert(!pthread_mutex_unlock(mtx)); }
+
+typedef pthread_t game_thrd;
+
+int game_thrd_init(game_thrd *thrd, void *(*start_func)(void *arg), void *arg) {
+  if (pthread_create(thrd, NULL, start_func, arg))
+    return RV_GDB_ERR_MTX;
+  return 0;
+}
+
+void game_thrd_join(game_thrd *thrd) { pthread_join(*thrd, NULL); }
+
 typedef struct game_regs {
-  rv_u32 dfbb;
-  rv_u32 dfbm;
+  rv_u32 vbase;
+  rv_u32 vmode;
 } game_regs;
 
 typedef struct game {
+  rv cpus[4];
+  game_mutex cpu_lock[4];
+  game_mutex bus_lock;
   rv_u8 *rom;
   rv_u8 *ram;
   game_regs regs;
   game_mutex video_lock;
+  game_thrd video_thrd;
+  rv_gdb gdb;
 } game;
 
-int game_init(game *gm, const char *rom) {
-  int fd = open(rom, O_RDONLY);
-  gm->rom = NULL;
-  gm->ram = NULL;
-  assert(!game_mutex_init(&gm->video_lock));
-  memset(&gm->regs, 0, sizeof(game_regs));
-  gm->rom = malloc(sizeof(rv_u8) * 0x10000);
-  if (!gm->rom)
-    return RV_GDB_ERR_NOMEM;
-  gm->ram = malloc(sizeof(rv_u8) * 0x1000000);
-  if (!gm->ram)
-    return RV_GDB_ERR_NOMEM;
-  memset(gm->rom, 0, 0x10000);
-  memset(gm->ram, 0, 0x1000000);
-  read(fd, gm->rom, 0x10000);
+#include <SDL2/SDL.h>
+
+#define W 854
+#define H 480
+
+void *game_video_thrd(void *arg) {
+  game *gm = (game *)arg;
+  if (SDL_Init(SDL_INIT_VIDEO) < 0)
+    return 0;
+  else {
+    SDL_Window *win =
+        SDL_CreateWindow("SDL2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                         854, 480, SDL_WINDOW_SHOWN);
+    SDL_Renderer *r = SDL_CreateRenderer(win, -1, 0);
+    SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+                                       SDL_TEXTUREACCESS_STREAMING, W, H);
+    rv_u32 *pix;
+    int run = 1;
+    while (run) {
+      void *locked_pix;
+      int pitch = 0;
+      SDL_Event ev;
+      while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_QUIT) {
+          run = 0;
+          break;
+        }
+      }
+      pix = NULL;
+      game_mutex_lock(&gm->video_lock);
+      if (gm->regs.vbase >= 0x40000000 &&
+          gm->regs.vbase + W * H * 4 <= 0x41000000)
+        pix = (rv_u32 *)(gm->ram + (gm->regs.vbase - 0x40000000));
+      game_mutex_unlock(&gm->video_lock);
+      SDL_LockTexture(t, NULL, &locked_pix, &pitch);
+      if (pix)
+        memcpy(locked_pix, pix, W * H * 4);
+      SDL_UnlockTexture(t);
+      SDL_RenderCopy(r, t, NULL, NULL);
+      SDL_RenderPresent(r);
+    }
+    SDL_DestroyRenderer(r);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+  }
   return 0;
 }
 
-void game_destroy(game *gm) {
-  if (gm->rom)
-    free(gm->rom);
-  if (gm->ram)
-    free(gm->ram);
+void *game_debug_thrd(void *arg) {
+  game *gm = (game *)arg;
+  (void)gm;
+  return NULL;
 }
 
 rv_res load_cb(void *user, rv_u32 addr) {
   game *m = (game *)user;
+  rv_u32 out;
   if (addr >= 0x80000000 && addr <= 0xBFFFFFFF) {
     return m->rom[(addr - 0x80000000) & ~(rv_u32)(0x10000)];
   } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
     return m->ram[addr - 0x40000000];
+  } else if (addr >= 0xC0000000 && addr < 0xC0000000 + sizeof(game_regs)) {
+    game_mutex_lock(&m->video_lock);
+    out = ((rv_u8 *)(&m->regs))[addr - 0xC0000000];
+    game_mutex_unlock(&m->video_lock);
+    return out;
   }
   return RV_BAD;
 }
@@ -1248,14 +1305,57 @@ rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
   } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
     m->ram[addr - 0x40000000] = data;
     return 0;
+  } else if (addr >= 0xC0000000 && addr < 0xC0000000 + sizeof(game_regs)) {
+    game_mutex_lock(&m->video_lock);
+    ((rv_u8 *)(&m->regs))[addr - 0xC0000000] = data;
+    game_mutex_unlock(&m->video_lock);
+    return 0;
   }
   return RV_BAD;
 }
-#if 0
+
+int game_init(game *gm, const char *rom) {
+  int fd = open(rom, O_RDONLY);
+  rv_u32 i;
+  gm->rom = NULL;
+  gm->ram = NULL;
+  for (i = 0; i < 4; i++) {
+    rv_init(&gm->cpus[i], (void *)gm, load_cb, store_cb);
+    gm->cpus[i].csrs.mhartid = i;
+    assert(!game_mutex_init(&gm->cpu_lock[i]));
+  }
+  assert(!game_mutex_init(&gm->bus_lock));
+  assert(!game_mutex_init(&gm->video_lock));
+  memset(&gm->regs, 0, sizeof(game_regs));
+  gm->rom = malloc(sizeof(rv_u8) * 0x10000);
+  if (!gm->rom)
+    return RV_GDB_ERR_NOMEM;
+  gm->ram = malloc(sizeof(rv_u8) * 0x1000000);
+  if (!gm->ram)
+    return RV_GDB_ERR_NOMEM;
+  memset(gm->rom, 0, 0x10000);
+  memset(gm->ram, 0, 0x1000000);
+  read(fd, gm->rom, 0x10000);
+  assert(!game_thrd_init(&gm->video_thrd, game_video_thrd, gm));
+  return 0;
+}
+
+void game_destroy(game *gm) {
+  if (gm->rom)
+    free(gm->rom);
+  if (gm->ram)
+    free(gm->ram);
+  game_mutex_destroy(&gm->video_lock);
+  game_mutex_destroy(&gm->bus_lock);
+  game_thrd_join(&gm->video_thrd);
+}
+
 int main(int argc, const char **argv) {
   int sock, new;
   struct sockaddr_in addr;
   int addrlen = sizeof(addr);
+  game gm;
+  (void)argc;
   if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     printf("\n Socket creation error \n");
     return 1;
@@ -1283,30 +1383,17 @@ int main(int argc, const char **argv) {
   }
   {
     const char *bn = argv[1];
-    game map;
-    int fd = open(bn, O_RDONLY);
     rv_u32 i = 0;
     int err = 0;
-    rv cpus[4];
     rv_gdb gdb;
-    map.rom = malloc(sizeof(rv_u8) * 0x10000);
-    map.ram = malloc(sizeof(rv_u8) * 0x1000000);
-    (void)(argc);
-    (void)(argv);
-    assert(map.rom);
-    assert(map.ram);
-    memset(map.rom, 0, 0x10000);
-    memset(map.ram, 0, 0x1000000);
-    read(fd, map.rom, 0x10000);
-    for (i = 0; i < 4; i++) {
-      rv_init(cpus + i, (void *)&map, &load_cb, &store_cb);
-      cpus[i].csrs.mhartid = (rv_u32)i;
-    }
+    assert(!game_init(&gm, bn));
     assert(!rv_gdb_init(&gdb, new));
-    assert(!rv_gdb_addhart(&gdb, cpus + 0, "cpu0"));
-    assert(!rv_gdb_addhart(&gdb, cpus + 1, "cpu1"));
-    assert(!rv_gdb_addhart(&gdb, cpus + 2, "gpu"));
-    assert(!rv_gdb_addhart(&gdb, cpus + 3, "spu"));
+    assert(!rv_gdb_addhart(&gdb, gm.cpus + 0, "cpu0"));
+    gdb.harts[0].need_send = 1;
+    gdb.harts[0].state = RV_GDB_STOP;
+    assert(!rv_gdb_addhart(&gdb, gm.cpus + 1, "cpu1"));
+    assert(!rv_gdb_addhart(&gdb, gm.cpus + 2, "gpu"));
+    assert(!rv_gdb_addhart(&gdb, gm.cpus + 3, "spu"));
     while (1) {
       while (!(err = rv_gdb_proc(&gdb))) {
       }
@@ -1325,17 +1412,20 @@ int main(int argc, const char **argv) {
         rv_u32 inst_out;
         if (h->state == RV_GDB_CONTINUE) {
           if ((inst_out = rv_inst(h->cpu))) {
-            h->except = inst_out - 1;
+            h->except = inst_out;
             h->state = RV_GDB_STOP;
             h->need_send = 1;
           }
         } else if (h->state == RV_GDB_STEP) {
           if ((inst_out = rv_inst(h->cpu))) {
-            h->except = inst_out - 1;
+            h->except = inst_out;
+          } else {
+            h->except = 0;
           }
           h->state = RV_GDB_STOP;
           h->need_send = 1;
         } else {
+          h->except = rv_inst(h->cpu);
           h->need_send = 1;
         }
       }
@@ -1352,54 +1442,12 @@ int main(int argc, const char **argv) {
 
   close(new);
   shutdown(sock, SHUT_RDWR);
+  game_destroy(&gm);
   return 0;
 }
-#endif
-
-#include <SDL2/SDL.h>
-
-#define W 854
-#define H 480
 
 /* threads:
- * debug (main thread)
- * cpu[0-3]
  * video
- * audio */
-
-int main(void) {
-  if (SDL_Init(SDL_INIT_VIDEO) < 0)
-    return EXIT_FAILURE;
-  else {
-    SDL_Window *win =
-        SDL_CreateWindow("SDL2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                         854, 480, SDL_WINDOW_SHOWN);
-    SDL_Renderer *r = SDL_CreateRenderer(win, -1, 0);
-    SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
-                                       SDL_TEXTUREACCESS_STREAMING, W, H);
-    unsigned int *pix = malloc(W * H * 4);
-    int run = 1;
-    int i = 0;
-    while (run) {
-      void *locked_pix;
-      int pitch = 0;
-      SDL_Event ev;
-      while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_QUIT) {
-          run = 0;
-          break;
-        }
-      }
-      memset(pix, i, W * H * 4);
-      SDL_LockTexture(t, NULL, &locked_pix, &pitch);
-      memcpy(locked_pix, pix, W * H * 4);
-      SDL_UnlockTexture(t);
-      SDL_RenderCopy(r, t, NULL, NULL);
-      SDL_RenderPresent(r);
-    }
-    SDL_DestroyRenderer(r);
-    SDL_DestroyWindow(win);
-    SDL_Quit();
-  }
-  return 0;
-}
+ * audio
+ * cpu[0-3]
+ * debug */

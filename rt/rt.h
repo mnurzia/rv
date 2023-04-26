@@ -7,8 +7,8 @@ typedef unsigned int u32;
 typedef signed int s32;
 
 #define RBASE ((u32 *)(0xC0000000))
-#define R_DFBB RBASE + 0
-#define R_DFBM RBASE + 1
+#define R_VBASE (RBASE + 0)
+#define R_VMODE (RBASE + 1)
 
 void rt_sw(u32 *addr, u32 v);
 u32 rt_lw(u32 *addr);
