@@ -1,50 +1,25 @@
-/* rv32uic */
+#include "rv.h"
+
 #include <assert.h>
-#include <fcntl.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-typedef unsigned char rv_u8;
-typedef unsigned int rv_u32;
-typedef unsigned long rv_res;
-
-typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr);
-typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
-
-typedef struct rv_csrs {
-  rv_u32 mhartid;
-  rv_u32 mstatus;
-  rv_u32 mstatush;
-  rv_u32 mscratch;
-  rv_u32 mepc;
-  rv_u32 mcause;
-  rv_u32 mtval;
-  rv_u32 mip;
-  rv_u32 mtinst;
-  rv_u32 mtval2;
-  rv_u32 mtvec;
-  rv_u32 mie;
-} rv_csrs;
-
-typedef struct rv {
-  rv_load_cb load_cb;
-  rv_store_cb store_cb;
-  rv_u32 r[32];
-  rv_u32 ip;
-  void *user;
-  rv_csrs csrs;
-} rv;
+#define RV_RESET_VEC 0x80000000
 
 void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb) {
   cpu->user = user;
   cpu->load_cb = load_cb;
   cpu->store_cb = store_cb;
-  cpu->ip = 0x80000000;
+  cpu->ip = RV_RESET_VEC;
   memset(cpu->r, 0, sizeof(cpu->r));
   memset(&cpu->csrs, 0, sizeof(cpu->csrs));
+#if RVF
+  memset(cpu->f, 0, sizeof(cpu->f));
+  cpu->fcsr = 0;
+#endif
 }
+
+void rv_destroy(rv *cpu) { (void)(cpu); }
 
 void rv_dump(rv *cpu) {
   int i, y;
@@ -56,8 +31,7 @@ void rv_dump(rv *cpu) {
   }
 }
 
-#define RV_BAD ((rv_res)1 << 32);
-#define rv_isbad(x) (x >> 32)
+#define rv_isbad(x) ((x) >> 32)
 
 rv_res rv_lb(rv *cpu, rv_u32 addr) { return cpu->load_cb(cpu->user, addr); }
 
@@ -83,18 +57,6 @@ rv_res rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) {
 }
 
 rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
-
-#define RV_EIALIGN 0
-#define RV_EIFAULT 1
-#define RV_EILL 2
-#define RV_EBP 3
-#define RV_ELALIGN 4
-#define RV_ELFAULT 5
-#define RV_ESALIGN 6
-#define RV_ESFAULT 7
-
-#define RV_ECALL 0x80000000
-#define RV_EBREAK 0x80000000
 
 #define RV_SBIT 0x80000000
 #define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT))
@@ -125,8 +87,6 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
   (rv_signext(rv_tb(i, 31, 20), 20) | rv_tbf(i, 19, 12, 12) |                  \
    rv_tb(i, 20, 11) | rv_tbf(i, 30, 21, 1))     /* imm. for J-type */
 #define rv_isz(i) (rv_bf(i, 1, 0) == 3 ? 4 : 2) /* instruction size */
-
-#define unimp() (rv_dump(cpu), assert(0 == "unimplemented instruction"))
 
 rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; } /* load register */
 
@@ -166,14 +126,14 @@ rv_res rv_lcsr(rv *cpu, rv_u32 csr) { /* load csr */
   } else if (csr == 0x342) { /* mcause */
     return cpu->csrs.mcause;
   } else {
-    unimp();
+    return RV_BAD;
   }
 }
 
 rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) { /* store csr */
   printf("(SCSR) %04X <- %08X\n", csr, v);
   if (csr == 0xF14) { /* mhartid */
-    unimp();
+    return RV_BAD;
   } else if (csr == 0x305) { /* mtvec */
     cpu->csrs.mtvec = v;
   } else if (csr == 0x740) { /* mnscratch */
@@ -201,47 +161,49 @@ rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v) { /* store csr */
   } else if (csr == 0x342) { /* mcause */
     cpu->csrs.mcause = v;
   } else {
-    unimp();
+    return RV_BAD;
   }
   return 0;
 }
 
 rv_u32 rv_except(rv *cpu, rv_u32 cause) { /* set exception state */
-  (void)cpu;
+  assert(cause);
   printf("(E) %04X\n", cause);
-  cpu->ip = (cpu->csrs.mtvec & (rv_u32)~1) + 4 * cause * (cpu->csrs.mtvec & 1);
-  return cause + 1;
+  cpu->ip =
+      (cpu->csrs.mtvec & (rv_u32)~1) + 4 * (cause - 1) * (cpu->csrs.mtvec & 1);
+  return cause;
 }
 
-#define rv_cop(c) rv_bf(c, 1, 0)           /* c. op */
-#define rv_cf3(c) rv_bf(c, 15, 13)         /* c. funct3 */
-#define rv_crp(r) (r + 8)                  /* c. register offsetter */
-#define rv_cird(c) rv_bf(c, 11, 7)         /* c. ci-format rd/rs1  */
-#define rv_cirpl(c) rv_crp(rv_bf(c, 4, 2)) /* c. rd'/rs2' (bits 4-2) */
-#define rv_cirph(c) rv_crp(rv_bf(c, 9, 7)) /* c. rd'/rs1' (bits 9-7) */
-#define rv_cimm_ciw(c)                                                         \
+#ifdef RVC
+#define rvc_op(c) rv_bf(c, 1, 0)           /* c. op */
+#define rvc_f3(c) rv_bf(c, 15, 13)         /* c. funct3 */
+#define rvc_rp(r) ((r) + 8)                /* c. prime register offsetter */
+#define rvc_ird(c) rv_bf(c, 11, 7)         /* c. ci-format rd/rs1  */
+#define rvc_irpl(c) rvc_rp(rv_bf(c, 4, 2)) /* c. rd'/rs2' (bits 4-2) */
+#define rvc_irph(c) rvc_rp(rv_bf(c, 9, 7)) /* c. rd'/rs1' (bits 9-7) */
+#define rvc_imm_ciw(c)                                                         \
   (rv_tbf(c, 10, 7, 6) | rv_tbf(c, 12, 11, 4) | rv_tb(c, 6, 3) |               \
    rv_tb(c, 5, 2)) /* CIW imm. for c.addi4spn */
-#define rv_cimm_cl(c)                                                          \
+#define rvc_imm_cl(c)                                                          \
   (rv_tb(c, 5, 6) | rv_tbf(c, 12, 10, 3) |                                     \
    rv_tb(c, 6, 2)) /* CL imm. for c.lw/c.sw */
-#define rv_cimm_ci(c)                                                          \
+#define rvc_imm_ci(c)                                                          \
   (rv_signext(rv_tb(c, 12, 5), 5) |                                            \
    rv_bf(c, 6, 2)) /* CI imm. for c.addi/c.li/c.lui */
-#define rv_cimm_ci_b(c)                                                        \
+#define rvc_imm_ci_b(c)                                                        \
   (rv_signext(rv_tb(c, 12, 9), 9) | rv_tbf(c, 4, 3, 7) | rv_tb(c, 5, 6) |      \
    rv_tb(c, 2, 5) | rv_tb(c, 6, 4)) /* CI imm. for c.addi16sp */
-#define rv_cimm_ci_c(c)                                                        \
+#define rvc_imm_ci_c(c)                                                        \
   (rv_tbf(c, 3, 2, 6) | rv_tb(c, 12, 5) |                                      \
    rv_tbf(c, 6, 4, 2)) /* CI imm. for c.lwsp */
-#define rv_cimm_cj(c)                                                          \
+#define rvc_imm_cj(c)                                                          \
   (rv_signext(rv_tb(c, 12, 11), 11) | rv_tb(c, 8, 10) | rv_tbf(c, 10, 9, 8) |  \
    rv_tb(c, 6, 7) | rv_tb(c, 7, 6) | rv_tb(c, 2, 5) | rv_tb(c, 11, 4) |        \
    rv_tbf(c, 5, 3, 1)) /* CJ imm. for c.jalr/c.j */
-#define rv_cimm_cb(c)                                                          \
+#define rvc_imm_cb(c)                                                          \
   (rv_signext(rv_tb(c, 12, 8), 8) | rv_tbf(c, 6, 5, 6) | rv_tb(c, 2, 5) |      \
    rv_tbf(c, 11, 10, 3) | rv_tbf(c, 4, 3, 1)) /* CB imm. for c.beqz/c.bnez */
-#define rv_cimm_css(c)                                                         \
+#define rvc_imm_css(c)                                                         \
   (rv_tbf(c, 8, 7, 6) | rv_tbf(c, 12, 9, 2)) /* CSS imm. for c.swsp */
 
 /* macros to make all instruction types */
@@ -261,110 +223,209 @@ rv_u32 rv_except(rv *cpu, rv_u32 cause) { /* set exception state */
   (rv_b(imm, 12) << 31 | rv_bf(imm, 10, 5) << 25 | (rs2) << 20 | (rs1) << 15 | \
    (f3) << 12 | rv_bf(imm, 4, 1) << 8 | rv_b(imm, 11) << 7 | (op) << 2 | 3)
 
-rv_u32 rv_cvtinst(rv *cpu, rv_u32 c) { /* convert compressed to regular inst. */
-  (void)c;
-  if (rv_cop(c) == 0) {
-    if (rv_cf3(c) == 0 && c != 0) { /* c.addi4spn -> addi rd', x2, nzuimm */
-      return rv_i_i(4, 0, rv_cirpl(c), 2, rv_cimm_ciw(c));
-    } else if (c == 0) { /* illegal */
+rv_u32 rvc_inst(rv_u32 c) { /* convert compressed to regular inst. */
+  if (rvc_op(c) == 0) {
+    if (rvc_f3(c) == 0 && c != 0) { /* c.addi4spn -> addi rd', x2, nzuimm */
+      return rv_i_i(4, 0, rvc_irpl(c), 2, rvc_imm_ciw(c));
+    } else if (c == 0) { /* illegal instr. */
       return 0;
-    } else if (rv_cf3(c) == 2) { /* c.lw -> lw rd', offset(rs1') */
-      return rv_i_i(0, 2, rv_cirpl(c), rv_cirph(c), rv_cimm_cl(c));
-    } else if (rv_cf3(c) == 6) { /* c.sw -> sw rs2', offset(rs1') */
-      return rv_i_s(8, 2, rv_cirph(c), rv_cirpl(c), rv_cimm_cl(c));
+    } else if (rvc_f3(c) == 2) { /* c.lw -> lw rd', offset(rs1') */
+      return rv_i_i(0, 2, rvc_irpl(c), rvc_irph(c), rvc_imm_cl(c));
+    } else if (rvc_f3(c) == 6) { /* c.sw -> sw rs2', offset(rs1') */
+      return rv_i_s(8, 2, rvc_irph(c), rvc_irpl(c), rvc_imm_cl(c));
     } else {
-      unimp();
+      return 0;
     }
-  } else if (rv_cop(c) == 1) {
-    if (rv_cf3(c) == 0) { /* c.addi -> addi rd, rd, nzimm */
-      return rv_i_i(4, 0, rv_cird(c), rv_cird(c), rv_cimm_ci(c));
-    } else if (rv_cf3(c) == 1) { /* c.jal -> jal x1, offset */
-      return rv_i_j(27, 1, rv_cimm_cj(c));
-    } else if (rv_cf3(c) == 2) { /* c.li -> addi rd, x0, imm */
-      return rv_i_i(4, 0, rv_cird(c), 0, rv_cimm_ci(c));
-    } else if (rv_cf3(c) == 3) { /* 01/011: LUI/ADDI16SP */
-      if (rv_cird(c) == 2) {     /* c.addi16sp -> addi x2, x2, nzimm */
-        return rv_i_i(4, 0, 2, 2, rv_cimm_ci_b(c));
-      } else if (rv_cird(c) != 0) { /* c.lui -> lui rd, nzimm */
-        return rv_i_u(13, rv_cird(c), rv_cimm_ci(c));
+  } else if (rvc_op(c) == 1) {
+    if (rvc_f3(c) == 0) { /* c.addi -> addi rd, rd, nzimm */
+      return rv_i_i(4, 0, rvc_ird(c), rvc_ird(c), rvc_imm_ci(c));
+    } else if (rvc_f3(c) == 1) { /* c.jal -> jal x1, offset */
+      return rv_i_j(27, 1, rvc_imm_cj(c));
+    } else if (rvc_f3(c) == 2) { /* c.li -> addi rd, x0, imm */
+      return rv_i_i(4, 0, rvc_ird(c), 0, rvc_imm_ci(c));
+    } else if (rvc_f3(c) == 3) { /* 01/011: LUI/ADDI16SP */
+      if (rvc_ird(c) == 2) {     /* c.addi16sp -> addi x2, x2, nzimm */
+        return rv_i_i(4, 0, 2, 2, rvc_imm_ci_b(c));
+      } else if (rvc_ird(c) != 0) { /* c.lui -> lui rd, nzimm */
+        return rv_i_u(13, rvc_ird(c), rvc_imm_ci(c));
       } else {
-        unimp();
+        return 0;
       }
-    } else if (rv_cf3(c) == 4) {   /* 01/100: MISC-ALU */
+    } else if (rvc_f3(c) == 4) {   /* 01/100: MISC-ALU */
       if (rv_bf(c, 11, 10) == 0) { /* c.srli -> srli rd', rd', shamt */
-        return rv_i_r(4, 5, rv_cirph(c), rv_cirph(c), rv_cimm_ci(c) & 0x1F, 0);
+        return rv_i_r(4, 5, rvc_irph(c), rvc_irph(c), rvc_imm_ci(c) & 0x1F, 0);
       } else if (rv_bf(c, 11, 10) == 1) { /* c.srai -> srai rd', rd', shamt */
-        return rv_i_r(4, 5, rv_cirph(c), rv_cirph(c), rv_cimm_ci(c) & 0x1F, 32);
+        return rv_i_r(4, 5, rvc_irph(c), rvc_irph(c), rvc_imm_ci(c) & 0x1F, 32);
       } else if (rv_bf(c, 11, 10) == 2) { /* c.andi -> andi rd', rd', imm */
-        return rv_i_i(4, 7, rv_cirph(c), rv_cirph(c), rv_cimm_ci(c));
+        return rv_i_i(4, 7, rvc_irph(c), rvc_irph(c), rvc_imm_ci(c));
       } else if (rv_bf(c, 11, 10) == 3) {
         if (rv_bf(c, 6, 5) == 0) { /* c.sub -> sub rd', rd', rs2' */
-          return rv_i_r(12, 0, rv_cirph(c), rv_cirph(c), rv_cirpl(c), 32);
+          return rv_i_r(12, 0, rvc_irph(c), rvc_irph(c), rvc_irpl(c), 32);
         } else if (rv_bf(c, 6, 5) == 1) { /* c.xor -> xor rd', rd', rs2' */
-          return rv_i_r(12, 4, rv_cirph(c), rv_cirph(c), rv_cirpl(c), 0);
+          return rv_i_r(12, 4, rvc_irph(c), rvc_irph(c), rvc_irpl(c), 0);
         } else if (rv_bf(c, 6, 5) == 2) { /* c.or -> or rd', rd', rs2' */
-          return rv_i_r(12, 6, rv_cirph(c), rv_cirph(c), rv_cirpl(c), 0);
+          return rv_i_r(12, 6, rvc_irph(c), rvc_irph(c), rvc_irpl(c), 0);
         } else if (rv_bf(c, 6, 5) == 3) { /* c.and -> and rd', rd', rs2' */
-          return rv_i_r(12, 7, rv_cirph(c), rv_cirph(c), rv_cirpl(c), 0);
+          return rv_i_r(12, 7, rvc_irph(c), rvc_irph(c), rvc_irpl(c), 0);
         } else {
-          unimp();
+          return 0;
         }
       } else {
-        unimp();
+        return 0;
       }
-    } else if (rv_cf3(c) == 5) { /* c.j -> jal x0, offset */
-      return rv_i_j(27, 0, rv_cimm_cj(c));
-    } else if (rv_cf3(c) == 6) { /* c.beqz -> beq rs1' x0, offset */
-      return rv_i_b(24, 0, rv_cirph(c), 0, rv_cimm_cb(c));
-    } else if (rv_cf3(c) == 7) { /* c.bnez -> bne rs1' x0, offset */
-      return rv_i_b(24, 1, rv_cirph(c), 0, rv_cimm_cb(c));
+    } else if (rvc_f3(c) == 5) { /* c.j -> jal x0, offset */
+      return rv_i_j(27, 0, rvc_imm_cj(c));
+    } else if (rvc_f3(c) == 6) { /* c.beqz -> beq rs1' x0, offset */
+      return rv_i_b(24, 0, rvc_irph(c), 0, rvc_imm_cb(c));
+    } else if (rvc_f3(c) == 7) { /* c.bnez -> bne rs1' x0, offset */
+      return rv_i_b(24, 1, rvc_irph(c), 0, rvc_imm_cb(c));
     } else {
-      unimp();
+      return 0;
     }
-  } else if (rv_cop(c) == 2) {
-    if (rv_cf3(c) == 0) { /* c.slli -> slli rd, rd, shamt */
-      return rv_i_r(4, 1, rv_cird(c), rv_cird(c), rv_cimm_ci(c) & 0x1F, 0);
-    } else if (rv_cf3(c) == 2) { /* c.lwsp -> lw rd, offset(x2) */
-      return rv_i_i(0, 2, rv_cird(c), 2, rv_cimm_ci_c(c));
-    } else if (rv_cf3(c) == 4 && !rv_b(c, 12) &&
+  } else if (rvc_op(c) == 2) {
+    if (rvc_f3(c) == 0) { /* c.slli -> slli rd, rd, shamt */
+      return rv_i_r(4, 1, rvc_ird(c), rvc_ird(c), rvc_imm_ci(c) & 0x1F, 0);
+    } else if (rvc_f3(c) == 2) { /* c.lwsp -> lw rd, offset(x2) */
+      return rv_i_i(0, 2, rvc_ird(c), 2, rvc_imm_ci_c(c));
+    } else if (rvc_f3(c) == 4 && !rv_b(c, 12) &&
                !rv_bf(c, 6, 2)) { /* c.jr -> jalr x0, 0(rs1) */
-      return rv_i_i(25, 0, 0, rv_cird(c), 0);
-    } else if (rv_cf3(c) == 4 && !rv_b(c, 12)) { /* c.mv -> add rd, x0, rs2 */
-      return rv_i_r(12, 0, rv_cird(c), 0, rv_bf(c, 6, 2), 0);
-    } else if (rv_cf3(c) == 4 && rv_b(c, 12) && rv_cird(c) &&
+      return rv_i_i(25, 0, 0, rvc_ird(c), 0);
+    } else if (rvc_f3(c) == 4 && !rv_b(c, 12)) { /* c.mv -> add rd, x0, rs2 */
+      return rv_i_r(12, 0, rvc_ird(c), 0, rv_bf(c, 6, 2), 0);
+    } else if (rvc_f3(c) == 4 && rv_b(c, 12) && rvc_ird(c) &&
                !rv_bf(c, 6, 2)) { /* c.jalr -> jalr x1, 0(rs1) */
-      return rv_i_i(25, 0, 1, rv_cird(c), 0);
-    } else if (rv_cf3(c) == 4 && rv_b(c, 12) && rv_cird(c) &&
+      return rv_i_i(25, 0, 1, rvc_ird(c), 0);
+    } else if (rvc_f3(c) == 4 && rv_b(c, 12) && rvc_ird(c) &&
                rv_bf(c, 6, 2)) { /* c.add -> add rd, rd, rs2 */
-      return rv_i_r(12, 0, rv_cird(c), rv_cird(c), rv_bf(c, 6, 2), 0);
-    } else if (rv_cf3(c) == 6) { /* c.swsp -> sw rs2, offset(x2) */
-      return rv_i_s(8, 2, 2, rv_bf(c, 6, 2), rv_cimm_css(c));
+      return rv_i_r(12, 0, rvc_ird(c), rvc_ird(c), rv_bf(c, 6, 2), 0);
+    } else if (rvc_f3(c) == 6) { /* c.swsp -> sw rs2, offset(x2) */
+      return rv_i_s(8, 2, 2, rv_bf(c, 6, 2), rvc_imm_css(c));
     } else {
-      unimp();
+      return 0;
     }
   } else {
-    unimp();
+    return 0;
   }
+}
+#endif /* RVC */
+
+#ifdef RVF
+
+#include <math.h>
+
+rv_f32 rvf_launder_u32(rv_u32 x) { return *((rv_f32 *)&x); } /* f32 -> u32 */
+rv_u32 rvf_launder_f32(rv_f32 x) { return *((rv_u32 *)&x); } /* u32 -> f32 */
+
+rv_f32 rvf_lr(rv *cpu, rv_u8 i) { return cpu->f[i]; } /* load float register */
+
+void rvf_sr(rv *cpu, rv_u8 i, rv_f32 v) { /* store float register */
+  cpu->f[i] = v;
+}
+
+#define rvf_irm(i) rv_bf(i, 14, 12)  /* float rounding mode */
+#define rvf_ifmt(i) rv_bf(i, 26, 25) /* float width */
+#define rvf_if5(i) rv_bf(i, 31, 27)  /* float funct5 */
+
+rv_u32 rvf_inst_flw(rv *cpu, rv_u32 i) { /* load fp op */
+  rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
+  rv_res res;
+  rv_f32 out;
+  if (rvf_irm(i) != 2) /* no widths other than single precision allowed */
+    return RV_EILL;
+  printf("(FLW) %08X -> ", addr);
+  res = rv_lw(cpu, addr);
+  if (rv_isbad(res)) {
+    printf("fault\n");
+    return RV_ELFAULT;
+  }
+  out = rvf_launder_u32((rv_u32)res);
+  rvf_sr(cpu, rv_ird(i), out);
+  printf("%f (%08X)\n", out, (rv_u32)res);
+  cpu->ip = cpu->next_ip;
   return 0;
 }
+
+rv_u32 rvf_inst_fsw(rv *cpu, rv_u32 i) { /* store fp op */
+  rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_s(i);
+  rv_res res;
+  if (rvf_irm(i) != 2) /* no widths other than single precision allowed */
+    return RV_EILL;
+  printf("(FSW) %08X -> ", addr);
+  res = rv_sw(cpu, addr, rvf_launder_f32(rvf_lr(cpu, rv_irs2(i))));
+  if (rv_isbad(res)) {
+    printf("fault\n");
+    return RV_ESFAULT;
+  }
+  cpu->ip = cpu->next_ip;
+  return 0;
+}
+
+rv_u32 rvf_inst_op(rv *cpu, rv_u32 i) { /* computational fp op */
+  rv_f32 a = rvf_lr(cpu, rv_irs1(i));
+  rv_f32 b = rvf_lr(cpu, rv_irs2(i));
+  rv_f32 y;
+  if (rvf_ifmt(i) != 0) /* no widths other than single precision allowed */
+    return RV_EILL;
+  if (rvf_if5(i) == 0) /* fadd.s */
+    y = a + b;
+  else if (rvf_if5(i) == 1) /* fsub.s */
+    y = a - b;
+  else if (rvf_if5(i) == 2) /* fmul.s */
+    y = a * b;
+  else if (rvf_if5(i) == 3) /* fdiv.s */
+    y = a / b;
+  else if (rvf_if5(i) == 4) {
+    rv_u32 sgn;
+    if (rvf_irm(i) == 0) /* fsgnj.s */
+      sgn = rvf_launder_f32(b) & RV_SBIT;
+    else if (rvf_irm(i) == 1) /* fsgnjn.s */
+      sgn = ~rvf_launder_f32(b) & RV_SBIT;
+    else if (rvf_irm(i) == 2) /* fsgnjx.s */
+      sgn = (rvf_launder_f32(b) ^ rvf_launder_f32(a)) & RV_SBIT;
+    else
+      return RV_EILL;
+    y = rvf_launder_u32((rvf_launder_f32(a) & (~RV_SBIT)) | sgn);
+  } else if (rvf_if5(i) == 5) { /* fmin.s, fmax.s */
+    if (rvf_irm(i) > 1)
+      return RV_EILL;
+    y = (a > b) ? (rvf_irm(i)) ? a : b : (rvf_irm(i)) ? b : a;
+  } else if (rvf_if5(i) == 11) /* fsqrt.s */
+    y = sqrtf(a);
+  else if (rvf_if5(i) == 24 && rv_irs2(i) <= 1) { /* fcvt.w.s, fcvt.wu.s */
+    y = rvf_lr(cpu, rv_ird(i)); /* ensure final sr is a no-op */
+    rv_sr(cpu, rv_ird(i), rv_irs2(i) ? (rv_u32)a : (rv_u32)(rv_s32)a);
+  } else if (rvf_if5(i) == 26 && rv_irs2(i) <= 1) { /* fcvt.s.w, fcvt.s.wu */
+    rv_u32 r = rv_lr(cpu, rv_irs1(i));
+    y = rv_irs2(i) ? (rv_f32)r : (rv_f32)(rv_s32)r;
+  } else if (rvf_if5(i) == 30 && rv_irs2(i) == 0) { /* fmv.x.w */
+    y = rvf_lr(cpu, rv_ird(i));
+    rv_sr(cpu, rv_ird(i), rvf_launder_f32(a));
+  } else if (rvf_if5(i) == 30 && rv_irs2(i) == 0) { /* fmv.w.x */
+    y = rvf_launder_u32(rv_lr(cpu, rv_irs1(i)));
+  } else
+    return RV_EILL;
+  rvf_sr(cpu, rv_ird(i), y);
+  cpu->ip = cpu->next_ip;
+  return 0;
+}
+
+#endif /* RVF */
 
 rv_u32 rv_inst(rv *cpu) {
   /* fetch instruction */
   rv_res ires = rv_lw(cpu, cpu->ip);
   rv_u32 i = (rv_u32)ires;
-  rv_u32 next_ip;
-  rv_u32 err = 0;
   if (rv_isbad(ires))
     printf("(IF) %08X -> fault\n", cpu->ip);
   else
     printf("(IF) %08X -> %08X\n", cpu->ip, i);
   if (rv_isbad(ires))
     return rv_except(cpu, RV_EIFAULT);
-  if (cpu->ip == 0x80002230)
-    printf("hit\n");
-  next_ip = cpu->ip + rv_isz(i);
+  cpu->next_ip = cpu->ip + rv_isz(i);
+#if RVC
   if (rv_isz(i) != 4)
-    i = rv_cvtinst(cpu, i & 0xFFFF);
+    i = rvc_inst(i & 0xFFFF);
+#endif
   if (rv_iopl(i) == 0) {
     if (rv_ioph(i) == 0) { /* 00/000: LOAD */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
@@ -384,7 +445,7 @@ rv_u32 rv_inst(rv *cpu) {
       } else if (rv_if3(i) == 5) { /* lhu */
         v = (rv_u32)(res = rv_lh(cpu, addr));
       } else {
-        unimp();
+        return rv_except(cpu, RV_EILL);
       }
       if (rv_isbad(res))
         printf("fault\n");
@@ -408,7 +469,7 @@ rv_u32 rv_inst(rv *cpu) {
       } else if (rv_if3(i) == 2) { /* sw */
         res = rv_sw(cpu, addr, rv_lr(cpu, rv_irs2(i)));
       } else {
-        unimp();
+        return rv_except(cpu, RV_EILL);
       }
       if (rv_isbad(res))
         printf("-> fault\n");
@@ -429,36 +490,43 @@ rv_u32 rv_inst(rv *cpu) {
           (rv_if3(i) == 6 && carry) ||        /* bltu */
           (rv_if3(i) == 7 && !carry)          /* bgtu */
       ) {
-        next_ip = targ;
+        cpu->next_ip = targ;
       } else if (rv_if3(i) == 2 || rv_if3(i) == 3) {
-        unimp();
+        return rv_except(cpu, RV_EILL);
       }
     } else {
-      unimp();
+      return rv_except(cpu, RV_EILL);
     }
   } else if (rv_iopl(i) == 1) {
-    if (rv_ioph(i) == 3 && rv_if3(i) == 0) { /* 11/001: JALR */
+#if RVF
+    if (rv_ioph(i) == 0) { /* 00/001: LOAD-FP */
+      return rvf_inst_flw(cpu, i);
+    } else if (rv_ioph(i) == 1) { /* 01/001: STORE-FP */
+      return rvf_inst_fsw(cpu, i);
+    } else
+#endif
+        if (rv_ioph(i) == 3 && rv_if3(i) == 0) { /* 11/001: JALR */
       rv_u32 target = (rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i)) & (~(rv_u32)1);
-      rv_sr(cpu, rv_ird(i), next_ip); /* jalr */
-      next_ip = target;
+      rv_sr(cpu, rv_ird(i), cpu->next_ip); /* jalr */
+      cpu->next_ip = target;
     } else {
-      unimp();
+      return rv_except(cpu, RV_EILL);
     }
   } else if (rv_iopl(i) == 3) {
     if (rv_ioph(i) == 0) {  /* 00/011: MISC-MEM */
       if (rv_if3(i) == 0) { /* fence */
         rv_u32 fm = rv_bf(i, 31, 28);
-        if (fm && fm != 16) /* fm != 0000/1000 */
+        if (fm && fm != 8) /* fm != 0000/1000 */
           return rv_except(cpu, RV_EILL);
       } else if (rv_if3(i) == 1) { /* fence.i */
       } else {
-        unimp();
+        return rv_except(cpu, RV_EILL);
       }
-    } else if (rv_ioph(i) == 3) {     /* 11/011: JAL */
-      rv_sr(cpu, rv_ird(i), next_ip); /* jal */
-      next_ip = cpu->ip + rv_iimm_j(i);
+    } else if (rv_ioph(i) == 3) {          /* 11/011: JAL */
+      rv_sr(cpu, rv_ird(i), cpu->next_ip); /* jal */
+      cpu->next_ip = cpu->ip + rv_iimm_j(i);
     } else {
-      unimp();
+      return rv_except(cpu, RV_EILL);
     }
   } else if (rv_iopl(i) == 4) {
     if (rv_ioph(i) == 0 || /* 00/100: OP-IMM */
@@ -485,7 +553,13 @@ rv_u32 rv_inst(rv *cpu) {
         y = a & b;
       }
       rv_sr(cpu, rv_ird(i), y);
-    } else if (rv_ioph(i) == 3) { /* 11/100: SYSTEM */
+    }
+#if RVF
+    else if (rv_ioph(i) == 2) { /* 10/100: OP-FP */
+      return rvf_inst_op(cpu, i);
+    }
+#endif
+    else if (rv_ioph(i) == 3) { /* 11/100: SYSTEM */
       rv_u32 csr = rv_iimm_iu(i);
       rv_u32 s = rv_if3(i) & 4 ? rv_irs1(i) : rv_lr(cpu, rv_irs1(i)); /* uimm */
       rv_res res;
@@ -516,34 +590,23 @@ rv_u32 rv_inst(rv *cpu) {
       } else if (!rv_if3(i)) {
         if (!rv_ird(i)) {
           if (!rv_irs1(i) && rv_irs2(i) == 2 && rv_if7(i) == 24) { /* mret */
-            next_ip = cpu->csrs.mepc;
+            cpu->next_ip = cpu->csrs.mepc;
           } else if (!rv_irs1(i) && !rv_irs2(i) && !rv_if7(i)) { /* ecall */
-            err = RV_ECALL;
-            /*
-            printf("(ECALL) ");
-            if (rv_lr(cpu, 17) == 93) {
-              if (rv_lr(cpu, 3) == 1)
-                printf("PASS!\n");
-              else {
-                printf("FAIL (%i)!\n", rv_lr(cpu, 10) >> 1);
-                exit(EXIT_FAILURE);
-              }
-              return 0;
-            }*/
+            return rv_except(cpu, RV_EECALL);
           } else if (!rv_irs1(i) && rv_irs2(i) == 1 &&
                      !rv_if7(i)) { /* ebreak */
-            err = RV_EBREAK;
+            return rv_except(cpu, RV_EBP);
           } else {
-            unimp();
+            return rv_except(cpu, RV_EILL);
           }
         } else {
-          unimp();
+          return rv_except(cpu, RV_EILL);
         }
       } else {
-        unimp();
+        return rv_except(cpu, RV_EILL);
       }
     } else {
-      unimp();
+      return rv_except(cpu, RV_EILL);
     }
   } else if (rv_iopl(i) == 5) {
     if (rv_ioph(i) == 0) {                           /* 00/101: AUIPC */
@@ -551,903 +614,11 @@ rv_u32 rv_inst(rv *cpu) {
     } else if (rv_ioph(i) == 1) {                    /* 01/101: LUI */
       rv_sr(cpu, rv_ird(i), rv_iimm_u(i));           /* lui */
     } else {
-      unimp();
+      return rv_except(cpu, RV_EILL);
     }
   } else {
-    unimp();
+    return rv_except(cpu, RV_EILL);
   }
-  cpu->ip = next_ip;
-  return err;
-}
-
-#include <arpa/inet.h>
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#define RV_GDB_ERR_NOMEM -1
-#define RV_GDB_ERR_FMT -2
-#define RV_GDB_ERR_CORRUPT -3
-#define RV_GDB_ERR_EOF -4
-#define RV_GDB_ERR_WRITE -5
-#define RV_GDB_ERR_READ -6
-#define RV_GDB_ERR_MTX -7
-
-#define RV_GDB_STOP 0
-#define RV_GDB_STEP 1
-#define RV_GDB_CONTINUE 2
-
-typedef struct rv_gdb_hart rv_gdb_hart;
-
-struct rv_gdb_hart {
-  rv *cpu;
-  rv_u32 state;
-  rv_u32 next_state;
-  rv_u32 except;
-  rv_u32 need_send;
-  const char *tid;
-};
-
-typedef struct rv_gdb {
-  rv_gdb_hart *harts;
-  rv_u32 harts_sz;
-  rv_u32 hart_idx;
-  rv_u8 *rx_pre;
-  rv_u32 rx_pre_ptr;
-  rv_u32 rx_pre_sz;
-  rv_u8 *rx;
-  rv_u32 rx_ptr;
-  rv_u32 rx_sz;
-  rv_u32 rx_alloc;
-  rv_u8 *tx;
-  rv_u32 tx_sz;
-  rv_u32 tx_alloc;
-  rv_u32 *bp;
-  rv_u32 bp_sz;
-  rv_u32 tx_seq;
-  rv_u32 tx_ack;
-  rv_u32 rx_seq;
-  rv_u32 rx_ack;
-  int sock;
-} rv_gdb;
-
-#define RV_GDB_BUF_ALLOC 1024
-
-int rv_gdb_init(rv_gdb *gdb, int sock) {
-  assert(sock);
-  gdb->harts = NULL;
-  gdb->harts_sz = 0;
-  gdb->hart_idx = 0;
-  gdb->rx_pre = NULL;
-  gdb->rx_pre_ptr = 0;
-  gdb->rx_pre_sz = 0;
-  gdb->rx = NULL;
-  gdb->rx_ptr = 0;
-  gdb->rx_sz = 0;
-  gdb->rx_alloc = 0;
-  gdb->tx = NULL;
-  gdb->tx_sz = 0;
-  gdb->tx_alloc = 0;
-  gdb->sock = sock;
-  gdb->bp = NULL;
-  gdb->bp_sz = 0;
-  gdb->tx_seq = 1; /* to handle first '+' */
-  gdb->tx_ack = 0;
-  gdb->rx_seq = 0;
-  gdb->rx_ack = 0;
-  if (!(gdb->rx_pre = malloc(RV_GDB_BUF_ALLOC)))
-    return RV_GDB_ERR_NOMEM;
-  memset(gdb->rx_pre, 0, RV_GDB_BUF_ALLOC);
+  cpu->ip = cpu->next_ip;
   return 0;
 }
-
-int rv_gdb_addhart(rv_gdb *gdb, rv *cpu, const char *tid) {
-  rv_gdb_hart *harts =
-      realloc(gdb->harts, (gdb->harts_sz + 1) * sizeof(rv_gdb_hart));
-  if (!harts)
-    return RV_GDB_ERR_NOMEM;
-  gdb->harts = harts;
-  gdb->harts[gdb->harts_sz].cpu = cpu;
-  gdb->harts[gdb->harts_sz].tid = tid;
-  gdb->harts[gdb->harts_sz].next_state = 0;
-  gdb->harts[gdb->harts_sz].except = 0;
-  gdb->harts[gdb->harts_sz].need_send = 0;
-  gdb->harts[gdb->harts_sz++].state = RV_GDB_CONTINUE;
-  return 0;
-}
-
-void rv_gdb_destroy(rv_gdb *gdb) {
-  if (gdb->rx_pre)
-    free(gdb->rx_pre);
-  if (gdb->rx)
-    free(gdb->rx);
-  if (gdb->tx)
-    free(gdb->tx);
-  if (gdb->harts)
-    free(gdb->harts);
-  if (gdb->bp)
-    free(gdb->bp);
-}
-
-int rv_gdb_recv(rv_gdb *gdb) {
-  ssize_t rv;
-reread:
-  rv = read(gdb->sock, gdb->rx_pre, RV_GDB_BUF_ALLOC);
-  assert(rv <= RV_GDB_BUF_ALLOC);
-  if (rv <= 0) {
-    if (errno == EINTR)
-      goto reread;
-    return RV_GDB_ERR_READ;
-  }
-  gdb->rx_pre_sz = (rv_u32)rv;
-  gdb->rx_pre_ptr = 0;
-  return 0;
-}
-
-int rv_gdb_in(rv_gdb *gdb, rv_u8 *out) {
-  int err = 0;
-  if (gdb->rx_pre_ptr == gdb->rx_pre_sz && (err = rv_gdb_recv(gdb)))
-    return err;
-  *out = gdb->rx_pre[gdb->rx_pre_ptr++];
-  return err;
-}
-
-int rv_gdb_rx(rv_gdb *gdb, rv_u8 *out) {
-  if (gdb->rx_ptr == gdb->rx_sz)
-    return RV_GDB_ERR_EOF;
-  *out = gdb->rx[gdb->rx_ptr++];
-  return 0;
-}
-
-int rv_gdb_hex2num(rv_u8 c) {
-  if (c >= '0' && c <= '9')
-    return c - '0';
-  else if (c >= 'a' && c <= 'f')
-    return c - 'a' + 10;
-  else if (c >= 'A' && c <= 'F')
-    return c - 'A' + 10;
-  else
-    return RV_GDB_ERR_FMT;
-}
-
-rv_u8 rv_gdb_num2hex(rv_u8 c) {
-  assert(c < 16);
-  if (c < 10)
-    return '0' + c;
-  else
-    return 'A' + c - 10;
-}
-
-int rv_gdb_next_hex(rv_gdb *gdb, rv_u8 *out) {
-  int err;
-  rv_u8 a, b;
-  if ((err = rv_gdb_in(gdb, &a)))
-    return err;
-  if ((err = rv_gdb_in(gdb, &b)))
-    return err;
-  if ((err = rv_gdb_hex2num(a)) < 0)
-    return err;
-  a = (rv_u8)err;
-  if ((err = rv_gdb_hex2num(b)) < 0)
-    return err;
-  b = (rv_u8)err;
-  *out = (a * 16) | b;
-  return 0;
-}
-
-int rv_gdb_tx(rv_gdb *gdb, rv_u8 c) {
-  if (gdb->tx_sz + 1 >= gdb->tx_alloc) {
-    rv_u32 new_alloc = gdb->tx_alloc ? gdb->tx_alloc << 1 : 16;
-    rv_u8 *tmp = realloc(gdb->tx, new_alloc);
-    if (!tmp)
-      return RV_GDB_ERR_NOMEM;
-    gdb->tx = tmp;
-    gdb->tx_alloc = new_alloc;
-  }
-  gdb->tx[gdb->tx_sz++] = c;
-  gdb->tx[gdb->tx_sz] = '\0';
-  return 0;
-}
-
-int rv_gdb_tx_s(rv_gdb *gdb, const char *s) {
-  int err = 0;
-  while (*s) {
-    if ((err = rv_gdb_tx(gdb, (rv_u8)*s)))
-      return err;
-    s++;
-  }
-  return err;
-}
-
-int rv_gdb_tx_begin(rv_gdb *gdb) {
-  int err;
-  gdb->tx_sz = 0;
-  if (gdb->rx_ack < gdb->rx_seq) {
-    if ((err = rv_gdb_tx(gdb, '+')))
-      return err;
-    gdb->rx_ack++;
-  }
-  if ((err = rv_gdb_tx(gdb, '$')))
-    return err;
-  return 0;
-}
-
-int rv_gdb_tx_end(rv_gdb *gdb) {
-  rv_u8 cksum = 0;
-  rv_u32 i;
-  int err = 0;
-  for (i = 2; i < gdb->tx_sz; i++) {
-    cksum += gdb->tx[i];
-  }
-  if ((err = rv_gdb_tx(gdb, '#')))
-    return err;
-  if ((err = rv_gdb_tx(gdb, rv_gdb_num2hex(cksum >> 4))))
-    return err;
-  if ((err = rv_gdb_tx(gdb, rv_gdb_num2hex(cksum & 0xF))))
-    return err;
-  if (write(gdb->sock, gdb->tx, gdb->tx_sz) != gdb->tx_sz)
-    return RV_GDB_ERR_WRITE;
-  printf("[Tx] %s %u\n", gdb->tx, ++gdb->tx_seq);
-  return 0;
-}
-
-int rv_gdb_rx_pre(rv_gdb *gdb, const char *s) {
-  rv_u32 i = gdb->rx_ptr;
-  while (1) {
-    if (*s == '\0') {
-      gdb->rx_ptr = i;
-      return 1;
-    }
-    if (i == gdb->rx_sz)
-      return 0;
-    if (gdb->rx[i] != *s)
-      return 0;
-    s++;
-    i++;
-  }
-}
-
-int rv_gdb_rx_h(rv_gdb *gdb, rv_u32 *v, unsigned int ndig, int le) {
-  int err = 0;
-  unsigned int i, j;
-  rv_u32 out = 0;
-  rv_u8 c;
-  rv_u32 saved = gdb->rx_ptr;
-  assert(ndig <= 8);
-  for (i = 0; i < ndig / 2; i++) {
-    for (j = 0; j < 2; j++) {
-      unsigned int dig_idx = (le ? i * 2 : (ndig - (i * 2) - 2)) + 1 - j;
-      if ((err = rv_gdb_rx(gdb, &c)))
-        goto error;
-      if ((err = rv_gdb_hex2num(c)) < 0)
-        goto error;
-      out |= (rv_u32)err << (dig_idx * 4);
-    }
-  }
-  err = 0;
-  *v = out;
-  return err;
-error:
-  gdb->rx_ptr = saved;
-  return err;
-}
-
-int rv_gdb_rx_svwh(rv_gdb *gdb, rv_u32 *v) {
-  int err = 0;
-  rv_u32 out = 0;
-  rv_u32 saved = gdb->rx_ptr;
-  int i = 0;
-  while (1) {
-    rv_u8 c;
-    if ((err = rv_gdb_rx(gdb, &c))) {
-      goto done;
-    }
-    if ((err = rv_gdb_hex2num(c)) < 0) {
-      gdb->rx_ptr--;
-      goto done;
-    }
-    out <<= 4;
-    out |= (rv_u32)err;
-    i++;
-  }
-done:
-  if (!i) {
-    gdb->rx_ptr = saved;
-    return RV_GDB_ERR_EOF;
-  }
-  *v = out;
-  return 0;
-}
-
-int rv_gdb_tx_h(rv_gdb *gdb, rv_u32 v, unsigned int ndig, int le) {
-  int err = 0;
-  unsigned int i, j;
-  assert(ndig <= 8);
-  for (i = 0; i < ndig / 2; i++) {
-    for (j = 0; j < 2; j++) {
-      unsigned int dig_idx = (le ? i * 2 : (ndig - (i * 2) - 2)) + 1 - j;
-      if ((err = rv_gdb_tx(gdb, rv_gdb_num2hex((v >> (dig_idx * 4)) & 0xF))))
-        return err;
-    }
-  }
-  return err;
-}
-
-int rv_gdb_tx_sh(rv_gdb *gdb, rv_u8 *buf) {
-  int err = 0;
-  while (*buf) {
-    if ((err = rv_gdb_tx_h(gdb, *(buf++), 2, 0)))
-      return err;
-  }
-  return err;
-}
-
-rv_u32 rv_gdb_cvt_sig(rv_u32 except) {
-  if (!except)
-    return 0; /* none */
-  except -= 1;
-  if (except == RV_EIFAULT || except == RV_ELFAULT || except == RV_ESFAULT)
-    return 10; /* SIGBUS */
-  else if (except == RV_EIALIGN || except == RV_ELALIGN || except == RV_ESALIGN)
-    return 10; /* SIGBUS */
-  else if (except == RV_EBREAK)
-    return 5; /* SIGTRAP */
-  else if (except == RV_EILL)
-    return 4; /* SIGILL */
-  else
-    return 6; /* SIGABRT */
-}
-
-int rv_gdb_stop(rv_gdb *gdb) {
-  int err = 0;
-  rv_u32 i;
-  for (i = 0; i < gdb->harts_sz; i++) {
-    rv_gdb_hart *h = gdb->harts + i;
-    if (!h->need_send) /* sent stop status */
-      continue;
-    if ((err = rv_gdb_tx_begin(gdb)))
-      return err;
-    if ((err = rv_gdb_tx(gdb, 'T')))
-      return err;
-    if ((err = rv_gdb_tx_h(gdb, rv_gdb_cvt_sig(h->except), 2, 0)))
-      return err;
-    if ((err = rv_gdb_tx_s(gdb, "thread:")))
-      return err;
-    if ((err = rv_gdb_tx(gdb, rv_gdb_num2hex((rv_u8)i + 1))))
-      return err;
-    if ((err = rv_gdb_tx(gdb, ';')))
-      return err;
-    if ((err = rv_gdb_tx_end(gdb)))
-      return err;
-    h->need_send = 0;
-    break;
-  }
-  for (i = 0; i < gdb->harts_sz; i++) {
-    if (gdb->harts[i].need_send)
-      return 1;
-  }
-  return err;
-}
-
-rv *rv_gdb_cpu(rv_gdb *gdb) { return gdb->harts[gdb->hart_idx].cpu; }
-
-int rv_gdb_packet(rv_gdb *gdb) {
-  rv_u8 c;
-  int err = 0;
-  gdb->rx_ptr = 0;
-  if ((err = rv_gdb_rx(gdb, &c)))
-    return err;
-  if (c == '?') { /* stop reason -> run until stop */
-    return 1;
-  } else if (c == 'H') { /* set current thread */
-    rv_u32 tid = 0;
-    if ((err = rv_gdb_rx(gdb, &c))) /* get command {c, g} */
-      return err;
-    if (c == 'c')
-      (void)0;
-    if (c == 'g') { /* set thrd for step/cont: deprecated */
-      if ((err = rv_gdb_rx_svwh(gdb, &tid)))
-        return err;
-      if (!tid) /* 0: select any thread, we prefer cpu0 */
-        tid += 1;
-      if (tid > gdb->harts_sz)
-        return RV_GDB_ERR_FMT;
-      gdb->hart_idx = tid - 1;
-    }
-    if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "OK")) ||
-        (err = rv_gdb_tx_end(gdb)))
-      return err;
-  } else if (c == 'T') { /* is thread alive */
-    if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "OK")) ||
-        (err = rv_gdb_tx_end(gdb)))
-      return err;
-  } else if (c == 'Z' || c == 'z') { /* breakpoint */
-    if ((err = rv_gdb_rx(gdb, &c)))  /* kind */
-      return err;
-    if (c != '0')
-      return RV_GDB_ERR_FMT;
-
-  } else if (c == 'c' || c == 's') { /* continue/step */
-    rv_u32 addr = 0;
-    if ((err = rv_gdb_rx_svwh(gdb, &addr) >= 0)) {
-      rv_gdb_cpu(gdb)->ip = addr;
-    }
-    gdb->harts[gdb->hart_idx].state = c == 'c' ? RV_GDB_CONTINUE : RV_GDB_STEP;
-    return 1;
-  } else if (c == 'g') { /* general registers */
-    rv_u32 i;
-    if ((err = rv_gdb_tx_begin(gdb)))
-      return err;
-    for (i = 0; i < 32; i++)
-      if ((err = rv_gdb_tx_h(gdb, rv_gdb_cpu(gdb)->r[i], 8, 1)))
-        return err;
-    if ((err = rv_gdb_tx_h(gdb, rv_gdb_cpu(gdb)->ip, 8, 1)))
-      return err;
-    if ((err = rv_gdb_tx_end(gdb)))
-      return err;
-  } else if (c == 'm') { /* read memory */
-    rv_u32 addr = 0, size = 0, i;
-    rv_res res;
-    if ((err = rv_gdb_rx_svwh(gdb, &addr)))
-      return err;
-    if ((err = rv_gdb_rx(gdb, &c)))
-      return err;
-    if (c != ',')
-      return RV_GDB_ERR_FMT;
-    if ((err = rv_gdb_rx_svwh(gdb, &size)))
-      return err;
-    if ((err = rv_gdb_tx_begin(gdb)))
-      return err;
-    for (i = 0; i < size; i++) {
-      res = rv_gdb_cpu(gdb)->load_cb(rv_gdb_cpu(gdb)->user, addr + i);
-      if (rv_isbad(res))
-        break;
-      else if ((err = rv_gdb_tx_h(gdb, (rv_u32)res, 2, 0)))
-        return err;
-    }
-    if ((err = rv_gdb_tx_end(gdb)))
-      return err;
-  } else if (c == 'q') {                   /* general query */
-    if (rv_gdb_rx_pre(gdb, "Supported")) { /* supported features */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "TStatus")) { /* trace status */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "fThreadInfo")) { /* thread list */
-      rv_u8 i;
-      if ((err = rv_gdb_tx_begin(gdb)))
-        return err;
-      if ((err = rv_gdb_tx(gdb, 'm')))
-        return err;
-      for (i = 0; i < gdb->harts_sz; i++) {
-        if (i && (err = rv_gdb_tx(gdb, ',')))
-          return err;
-        if ((rv_gdb_tx(gdb, rv_gdb_num2hex(i + 1))))
-          return err;
-      }
-      if ((err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "sThreadInfo")) { /* thread list stop */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "l")) ||
-          (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "Attached")) { /* process attach status */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "0")) ||
-          (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "C")) { /* return thread id */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "QC")) ||
-          (err = rv_gdb_tx(gdb, rv_gdb_num2hex((rv_u8)gdb->hart_idx + 1))) ||
-          (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "Offsets")) { /* section offsets */
-      if ((err = rv_gdb_tx_begin(gdb)) ||
-          (err = rv_gdb_tx_s(gdb, "TextSeg=80000000")) ||
-          (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "Symbol::")) { /* symbol lookup ready */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_s(gdb, "OK")) ||
-          (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "ThreadExtraInfo,")) {
-      rv_u32 tid = 0;
-      if ((err = rv_gdb_rx_svwh(gdb, &tid)))
-        return err;
-      if (!tid || tid > gdb->harts_sz)
-        return RV_GDB_ERR_FMT;
-      if ((err = rv_gdb_tx_begin(gdb)) ||
-          (err = rv_gdb_tx_sh(gdb, (rv_u8 *)(gdb->harts[tid - 1].tid))) ||
-          (err = rv_gdb_tx_end(gdb)))
-        return err;
-      return 0;
-    } else {
-      assert(0);
-    }
-  } else if (c == 'v') { /* variable...? Idk what the v stands for. */
-    if (rv_gdb_rx_pre(gdb, "MustReplyEmpty")) { /* unknown packet test */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "Cont?")) { /* vCont support query */
-      if ((err = rv_gdb_tx_begin(gdb)) ||
-          (err = rv_gdb_tx_s(gdb, "vCont;c;s;C;S;t")) ||
-          (err = rv_gdb_tx_end(gdb)))
-        return err;
-    } else if (rv_gdb_rx_pre(gdb, "Cont")) { /* vCont */
-      rv_u32 i;
-      for (i = 0; i < gdb->harts_sz; i++) {
-        gdb->harts[i].next_state = 0;
-      }
-      while (1) {
-        rv_u32 tid = 0; /* all thrds */
-        rv_u8 act;
-        rv_u32 sig = 0;
-        if ((err = rv_gdb_rx(gdb, &c)) && err != RV_GDB_ERR_EOF)
-          return err;
-        if (err) /* eof */
-          break;
-        if (c != ';')
-          return RV_GDB_ERR_FMT;
-        if ((err = rv_gdb_rx(gdb, &act))) /* parse action */
-          return err;
-        if ((act == 'C' || act == 'S') && (err = rv_gdb_rx_h(gdb, &sig, 2, 0)))
-          return err; /* parse signal */
-        if ((err = rv_gdb_rx(gdb, &c)) &&
-            err != RV_GDB_ERR_EOF) /* parse colon (maybe) */
-          return err;
-        if (!err && c != ':')
-          gdb->rx_ptr--;
-        else if (!err && (err = rv_gdb_rx_svwh(
-                              gdb, &tid))) { /* couldn't parse hex tid */
-          rv_u8 a, b;
-          if ((err = rv_gdb_rx(gdb, &a)) ||
-              (err = rv_gdb_rx(gdb, &b))) /* parse -1 */
-            return err;
-          if (a != '-' || b != '1')
-            return RV_GDB_ERR_FMT;
-        }
-        for (i = 0; i < gdb->harts_sz; i++) {
-          rv_u32 state;
-          if (act == 'c' || act == 'C') /* continue */
-            state = RV_GDB_CONTINUE;
-          else if (act == 's' || act == 'S') /* step */
-            state = RV_GDB_STEP;
-          else
-            return RV_GDB_ERR_FMT;
-          if ((!tid || (i == tid - 1)) &&
-              !gdb->harts[i].next_state) { /* write state to hart */
-            printf("[vCont] setting thread %u state to %u\n", i, state);
-            gdb->harts[i].state = state;
-            gdb->harts[i].next_state = 1;
-          }
-        }
-      }
-      return 1;
-    } else if (rv_gdb_rx_pre(gdb, "Kill")) { /* kill, ignore pid for now */
-      if ((err = rv_gdb_tx_begin(gdb)) || (err = rv_gdb_tx_end(gdb))) /* ack */
-        return err;
-      return 2;
-    } else {
-      assert(0);
-    }
-  } else {
-    assert(0);
-  }
-  return err;
-}
-
-int rv_gdb_proc(rv_gdb *gdb) {
-  int err = 0;
-  rv_u8 c;
-  rv_u8 cksum = 0;
-  gdb->rx_sz = 0;
-  gdb->rx_ptr = 0;
-ack:
-  if ((err = rv_gdb_in(gdb, &c)))
-    return err;
-  if (c == '+') {
-    assert(gdb->tx_ack != gdb->tx_seq);
-    gdb->tx_ack++;
-    goto ack;
-  }
-  if (c != '$')
-    return RV_GDB_ERR_FMT;
-  while (1) {
-    if ((err = rv_gdb_in(gdb, &c)))
-      return err;
-    if (c == '#') { /* packet end */
-      gdb->rx_seq++;
-      if ((err = rv_gdb_next_hex(gdb, &c)))
-        return err;
-      if (c != cksum)
-        return RV_GDB_ERR_CORRUPT;
-      /* process packet */
-      printf("[Rx] %s\n", gdb->rx);
-      if (gdb->rx_sz && (err = rv_gdb_packet(gdb)))
-        return err;
-      break;
-    } else {
-      if (gdb->rx_sz + 1 >= gdb->rx_alloc) {
-        rv_u32 new_alloc = gdb->rx_alloc ? gdb->rx_alloc << 1 : 16;
-        rv_u8 *tmp = realloc(gdb->rx, new_alloc);
-        if (!tmp)
-          return RV_GDB_ERR_NOMEM;
-        gdb->rx = tmp;
-        gdb->rx_alloc = new_alloc;
-      }
-      cksum += c;
-      gdb->rx[gdb->rx_sz++] = c;
-      gdb->rx[gdb->rx_sz] = '\0';
-    }
-  }
-  return 0;
-}
-
-#include <pthread.h>
-
-typedef pthread_mutex_t game_mutex;
-
-int game_mutex_init(game_mutex *mtx) {
-  if (pthread_mutex_init(mtx, NULL))
-    return RV_GDB_ERR_MTX;
-  return 0;
-}
-
-void game_mutex_destroy(game_mutex *mtx) { pthread_mutex_destroy(mtx); }
-
-void game_mutex_lock(game_mutex *mtx) { assert(!pthread_mutex_lock(mtx)); }
-
-void game_mutex_unlock(game_mutex *mtx) { assert(!pthread_mutex_unlock(mtx)); }
-
-typedef pthread_t game_thrd;
-
-int game_thrd_init(game_thrd *thrd, void *(*start_func)(void *arg), void *arg) {
-  if (pthread_create(thrd, NULL, start_func, arg))
-    return RV_GDB_ERR_MTX;
-  return 0;
-}
-
-void game_thrd_join(game_thrd *thrd) { pthread_join(*thrd, NULL); }
-
-typedef struct game_regs {
-  rv_u32 vbase;
-  rv_u32 vmode;
-} game_regs;
-
-typedef struct game {
-  rv cpus[4];
-  game_mutex cpu_lock[4];
-  game_mutex bus_lock;
-  rv_u8 *rom;
-  rv_u8 *ram;
-  game_regs regs;
-  game_mutex video_lock;
-  game_thrd video_thrd;
-  rv_gdb gdb;
-} game;
-
-#include <SDL2/SDL.h>
-
-#define W 854
-#define H 480
-
-void *game_video_thrd(void *arg) {
-  game *gm = (game *)arg;
-  if (SDL_Init(SDL_INIT_VIDEO) < 0)
-    return 0;
-  else {
-    SDL_Window *win =
-        SDL_CreateWindow("SDL2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                         854, 480, SDL_WINDOW_SHOWN);
-    SDL_Renderer *r = SDL_CreateRenderer(win, -1, 0);
-    SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
-                                       SDL_TEXTUREACCESS_STREAMING, W, H);
-    rv_u32 *pix;
-    int run = 1;
-    while (run) {
-      void *locked_pix;
-      int pitch = 0;
-      SDL_Event ev;
-      while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_QUIT) {
-          run = 0;
-          break;
-        }
-      }
-      pix = NULL;
-      game_mutex_lock(&gm->video_lock);
-      if (gm->regs.vbase >= 0x40000000 &&
-          gm->regs.vbase + W * H * 4 <= 0x41000000)
-        pix = (rv_u32 *)(gm->ram + (gm->regs.vbase - 0x40000000));
-      game_mutex_unlock(&gm->video_lock);
-      SDL_LockTexture(t, NULL, &locked_pix, &pitch);
-      if (pix)
-        memcpy(locked_pix, pix, W * H * 4);
-      SDL_UnlockTexture(t);
-      SDL_RenderCopy(r, t, NULL, NULL);
-      SDL_RenderPresent(r);
-    }
-    SDL_DestroyRenderer(r);
-    SDL_DestroyWindow(win);
-    SDL_Quit();
-  }
-  return 0;
-}
-
-void *game_debug_thrd(void *arg) {
-  game *gm = (game *)arg;
-  (void)gm;
-  return NULL;
-}
-
-rv_res load_cb(void *user, rv_u32 addr) {
-  game *m = (game *)user;
-  rv_u32 out;
-  if (addr >= 0x80000000 && addr <= 0xBFFFFFFF) {
-    return m->rom[(addr - 0x80000000) & ~(rv_u32)(0x10000)];
-  } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
-    return m->ram[addr - 0x40000000];
-  } else if (addr >= 0xC0000000 && addr < 0xC0000000 + sizeof(game_regs)) {
-    game_mutex_lock(&m->video_lock);
-    out = ((rv_u8 *)(&m->regs))[addr - 0xC0000000];
-    game_mutex_unlock(&m->video_lock);
-    return out;
-  }
-  return RV_BAD;
-}
-
-rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
-  game *m = (game *)user;
-  if (addr >= 0x80000000 && addr <= 0xBFFFFFFF) {
-    return RV_BAD;
-  } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
-    m->ram[addr - 0x40000000] = data;
-    return 0;
-  } else if (addr >= 0xC0000000 && addr < 0xC0000000 + sizeof(game_regs)) {
-    game_mutex_lock(&m->video_lock);
-    ((rv_u8 *)(&m->regs))[addr - 0xC0000000] = data;
-    game_mutex_unlock(&m->video_lock);
-    return 0;
-  }
-  return RV_BAD;
-}
-
-int game_init(game *gm, const char *rom) {
-  int fd = open(rom, O_RDONLY);
-  rv_u32 i;
-  gm->rom = NULL;
-  gm->ram = NULL;
-  for (i = 0; i < 4; i++) {
-    rv_init(&gm->cpus[i], (void *)gm, load_cb, store_cb);
-    gm->cpus[i].csrs.mhartid = i;
-    assert(!game_mutex_init(&gm->cpu_lock[i]));
-  }
-  assert(!game_mutex_init(&gm->bus_lock));
-  assert(!game_mutex_init(&gm->video_lock));
-  memset(&gm->regs, 0, sizeof(game_regs));
-  gm->rom = malloc(sizeof(rv_u8) * 0x10000);
-  if (!gm->rom)
-    return RV_GDB_ERR_NOMEM;
-  gm->ram = malloc(sizeof(rv_u8) * 0x1000000);
-  if (!gm->ram)
-    return RV_GDB_ERR_NOMEM;
-  memset(gm->rom, 0, 0x10000);
-  memset(gm->ram, 0, 0x1000000);
-  read(fd, gm->rom, 0x10000);
-  assert(!game_thrd_init(&gm->video_thrd, game_video_thrd, gm));
-  return 0;
-}
-
-void game_destroy(game *gm) {
-  if (gm->rom)
-    free(gm->rom);
-  if (gm->ram)
-    free(gm->ram);
-  game_mutex_destroy(&gm->video_lock);
-  game_mutex_destroy(&gm->bus_lock);
-  game_thrd_join(&gm->video_thrd);
-}
-
-int main(int argc, const char **argv) {
-  int sock, new;
-  struct sockaddr_in addr;
-  int addrlen = sizeof(addr);
-  game gm;
-  (void)argc;
-  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    printf("\n Socket creation error \n");
-    return 1;
-  }
-
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = INADDR_ANY;
-  addr.sin_port = htons(61444);
-
-  if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    perror("bind failed");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  if (listen(sock, 3) < 0) {
-    perror("listen");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  if ((new = accept(sock, (struct sockaddr *)&addr, (socklen_t *)&addrlen)) <
-      0) {
-    perror("accept");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  {
-    const char *bn = argv[1];
-    rv_u32 i = 0;
-    int err = 0;
-    rv_gdb gdb;
-    assert(!game_init(&gm, bn));
-    assert(!rv_gdb_init(&gdb, new));
-    assert(!rv_gdb_addhart(&gdb, gm.cpus + 0, "cpu0"));
-    gdb.harts[0].need_send = 1;
-    gdb.harts[0].state = RV_GDB_STOP;
-    assert(!rv_gdb_addhart(&gdb, gm.cpus + 1, "cpu1"));
-    assert(!rv_gdb_addhart(&gdb, gm.cpus + 2, "gpu"));
-    assert(!rv_gdb_addhart(&gdb, gm.cpus + 3, "spu"));
-    while (1) {
-      while (!(err = rv_gdb_proc(&gdb))) {
-      }
-      if (err == 2) /* vKill */
-        break;
-      assert(err > 0);
-      /* send pending stop events */
-      if ((err = rv_gdb_stop(&gdb)) == 1) {
-        continue; /* get acks for those */
-      } else if (err) {
-        exit(1);
-      }
-    cont:
-      for (i = 0; i < gdb.harts_sz; i++) {
-        rv_gdb_hart *h = gdb.harts + i;
-        rv_u32 inst_out;
-        if (h->state == RV_GDB_CONTINUE) {
-          if ((inst_out = rv_inst(h->cpu))) {
-            h->except = inst_out;
-            h->state = RV_GDB_STOP;
-            h->need_send = 1;
-          }
-        } else if (h->state == RV_GDB_STEP) {
-          if ((inst_out = rv_inst(h->cpu))) {
-            h->except = inst_out;
-          } else {
-            h->except = 0;
-          }
-          h->state = RV_GDB_STOP;
-          h->need_send = 1;
-        } else {
-          h->except = rv_inst(h->cpu);
-          h->need_send = 1;
-        }
-      }
-      for (i = 0; i < gdb.harts_sz; i++) {
-        if (gdb.harts[i].state == RV_GDB_STOP)
-          goto stop;
-      }
-      goto cont;
-    stop:
-      rv_gdb_stop(&gdb);
-    }
-    rv_gdb_destroy(&gdb);
-  }
-
-  close(new);
-  shutdown(sock, SHUT_RDWR);
-  game_destroy(&gm);
-  return 0;
-}
-
-/* threads:
- * video
- * audio
- * cpu[0-3]
- * debug */
