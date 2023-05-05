@@ -4,6 +4,8 @@
 #define RVC 1
 #define RVF 1 /* no support for rounding modes other than RNE */
 
+#define RV_VERBOSE 0
+
 #define RV_EIALIGN 1 /* 3.1.16 Machine Cause Register (mcause) */
 #define RV_EIFAULT 2
 #define RV_EILL 3
@@ -13,6 +15,8 @@
 #define RV_ESALIGN 7
 #define RV_ESFAULT 8
 #define RV_EECALL 9
+
+#define rv_isbad(x) ((x) >> 32)
 
 typedef unsigned char rv_u8;
 typedef int rv_s32;
@@ -49,8 +53,8 @@ typedef struct rv {
   rv_f32 f[32];
   rv_u32 fcsr;
 #endif
-  rv_u32 ip;
-  rv_u32 next_ip;
+  rv_u32 pc;
+  rv_u32 next_pc;
   void *user;
   rv_csrs csrs;
 } rv;
