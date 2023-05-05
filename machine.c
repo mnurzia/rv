@@ -13,6 +13,12 @@ rv_res load_cb(void *user, rv_u32 addr) {
     return m->rom[(addr - 0x80000000) & ~(rv_u32)(0x10000)];
   } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
     return m->ram[addr - 0x40000000];
+  } else if (addr >= 0xC0000000 && addr < 0xC0000000 + sizeof(machine_regs)) {
+    rv_u32 out;
+    mtx_lock(&m->mtx_video);
+    out = ((rv_u8 *)(&m->regs))[addr - 0xC0000000];
+    mtx_unlock(&m->mtx_video);
+    return out;
   }
   return RV_BAD;
 }
@@ -23,6 +29,11 @@ rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
     return RV_BAD;
   } else if (addr >= 0x40000000 && addr <= 0x40FFFFFF) {
     m->ram[addr - 0x40000000] = data;
+    return 0;
+  } else if (addr >= 0xC0000000 && addr < 0xC0000000 + sizeof(machine_regs)) {
+    mtx_lock(&m->mtx_video);
+    ((rv_u8 *)(&m->regs))[addr - 0xC0000000] = data;
+    mtx_unlock(&m->mtx_video);
     return 0;
   }
   return RV_BAD;
@@ -47,6 +58,8 @@ int machine_init(machine *m, const char *rom) {
   memset(m->ram, 0, 0x1000000);
   read(fd, m->rom, 0x10000);
   rv_gdb_init(&m->gdb);
+  mtx_init(&m->mtx_video, 0);
+  memset(&m->regs, 0, sizeof(machine_regs));
   return 0;
 }
 

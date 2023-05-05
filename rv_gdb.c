@@ -680,7 +680,7 @@ int rv_gdb_hart_thrd(void *arg) {
   int i;
   rv_u32 rv;
   while (1) {
-    for (i = 0; i < 512; i++) { /* free-run and attempt stop every 512 cyc */
+    for (i = 0; i < 1024; i++) { /* free-run and attempt stop every 512 cyc */
       if ((rv = rv_inst(hart->cpu))) {
         mtx_lock(&hart->mtx);
         hart->state = RV_GDB_STATE_STOP;
@@ -689,7 +689,6 @@ int rv_gdb_hart_thrd(void *arg) {
         goto ret_unlock;
       }
     }
-    usleep(1000 * 500);
     mtx_lock(&hart->mtx);
     if (hart->state == RV_GDB_STATE_PRE_STOP) {
       hart->state = RV_GDB_STATE_STOP;
@@ -705,42 +704,58 @@ ret_unlock:
   return 0;
 }
 
-int open_sock(void) {
-  int sock, new;
-  struct sockaddr_in addr;
-  int addrlen = sizeof(addr);
-  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    printf("\n Socket creation error \n");
-    return 1;
-  }
-
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = INADDR_ANY;
-  addr.sin_port = htons(61444);
-
-  if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    perror("bind failed");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  if (listen(sock, 3) < 0) {
-    perror("listen");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  if ((new = accept(sock, (struct sockaddr *)&addr, (socklen_t *)&addrlen)) <
-      0) {
-    perror("accept");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  return new;
-}
-
 #include "machine.h"
 
+#include <SDL2/SDL.h>
+
+#define W 640
+#define H 480
+
+int video_thrd(void *arg) {
+  machine *m = (machine *)arg;
+  if (SDL_Init(SDL_INIT_VIDEO) < 0)
+    return 0;
+  else {
+    SDL_Window *win =
+        SDL_CreateWindow("SDL2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                         854, 480, SDL_WINDOW_SHOWN);
+    SDL_Renderer *r = SDL_CreateRenderer(win, -1, 0);
+    SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+                                       SDL_TEXTUREACCESS_STREAMING, W, H);
+    rv_u32 *pix;
+    int run = 1;
+    while (run) {
+      void *locked_pix;
+      int pitch = 0;
+      SDL_Event ev;
+      while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_QUIT) {
+          run = 0;
+          break;
+        }
+      }
+      pix = NULL;
+      mtx_lock(&m->mtx_video);
+      if (m->regs.vbase >= 0x40000000 &&
+          m->regs.vbase + W * H * 4 <= 0x41000000)
+        pix = (rv_u32 *)(m->ram + (m->regs.vbase - 0x40000000));
+      mtx_unlock(&m->mtx_video);
+      SDL_LockTexture(t, NULL, &locked_pix, &pitch);
+      if (pix)
+        memcpy(locked_pix, pix, W * H * 4);
+      SDL_UnlockTexture(t);
+      SDL_RenderCopy(r, t, NULL, NULL);
+      SDL_RenderPresent(r);
+    }
+    SDL_DestroyRenderer(r);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+  }
+  return 0;
+}
+
 int main(int argc, const char **argv) {
-  thrd_t recv_thrd, hart_thrds[4];
+  thrd_t cmd_thrd, recv_thrd, hart_thrds[4];
   rv_gdb_hart_thrd_arg args[4];
   machine m;
   rv_u32 i;
@@ -755,6 +770,7 @@ int main(int argc, const char **argv) {
            thrd_error);
   }
   assert(thrd_create(&recv_thrd, rv_gdb_recv_thrd, &m.gdb) != thrd_error);
-  rv_gdb_cmd_thrd(&m.gdb);
+  assert(thrd_create(&cmd_thrd, rv_gdb_cmd_thrd, &m.gdb) != thrd_error);
+  video_thrd(&m);
   return 0;
 }

@@ -12,7 +12,7 @@ tests:
 	mkdir -p tests
 
 bin/rt.o: bin rt/main.c rt/rt.c rt/rt.s link.ld
-	$(RVCC) -nostdlib -nostartfiles -Tlink.ld -march=rv32i -mabi=ilp32 -o bin/rt.o rt/main.c rt/rt.s rt/rt.c -e _start -O -g -no-pie
+	$(RVCC) -nostdlib -nostartfiles -Tlink.ld -march=rv32i -mabi=ilp32 -o bin/rt.o rt/main.c rt/rt.s rt/rt.c -e _start -O3 -g -no-pie
 
 bin/rt.bin: bin bin/rt.o
 	$(RVOC) -g -O binary bin/rt.o bin/rt.bin
@@ -22,7 +22,7 @@ bin/rt.dmp: bin bin/rt.o
 	$(RVOD) -D -M no-aliases -M numeric bin/rt-nodbg.o > bin/rt.dmp
 
 bin/rv: bin rv.c rv_gdb.c machine.c ext/tinycthread.c
-	$(CC) -o bin/rv rv.c rv_gdb.c machine.c ext/tinycthread.c -Wall -Werror --std=c89 -pedantic -Wextra -g -fsanitize=address -lm -lSDL2 -isystem /opt/homebrew/include/ -L/opt/homebrew/opt/sdl2/lib
+	$(CC) -o bin/rv rv.c rv_gdb.c machine.c ext/tinycthread.c -Wall -Werror --std=c89 -pedantic -Wextra -g -O3 -fsanitize=address -lm -lSDL2 -isystem /opt/homebrew/include/ -L/opt/homebrew/opt/sdl2/lib
 
 dump: bin bin/rt.dmp
 	cat bin/rt.dmp
