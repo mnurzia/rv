@@ -1,6 +1,7 @@
 #ifndef MN_RV_H
 #define MN_RV_H
 
+#define RVM 1
 #define RVC 1
 #define RVF 1 /* no support for rounding modes other than RNE */
 
@@ -18,12 +19,22 @@
 
 #define rv_isbad(x) ((x) >> 32)
 
+#if __STDC__ && __STDC_VERSION__ >= 199901L
+#include <stdint.h>
+typedef uint8_t rv_u8;
+typedef int32_t rv_s32;
+typedef uint32_t rv_u32;
+typedef uint64_t rv_res;
+typedef uint64_t rv_u64;
+typedef int64_t rv_s64;
+#else
 typedef unsigned char rv_u8;
 typedef int rv_s32;
 typedef unsigned int rv_u32;
 typedef unsigned long rv_res;
 typedef unsigned long rv_u64;
 typedef signed long rv_s64;
+#endif
 
 typedef float rv_f32;
 

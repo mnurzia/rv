@@ -509,7 +509,9 @@ rv_u32 rv_inst(rv *cpu) { /* single step */
       rv_u32 b = rv_ioph(i) ? rv_lr(cpu, rv_irs2(i)) : rv_iimm_i(i);
       rv_u32 s = (rv_ioph(i) || rv_if3(i)) ? rv_b(i, 30) : 0, sh = b & 0x1F;
       rv_u32 y;
+#if RVM
       if (!rv_b(i, 25)) {
+#endif
         if (rv_if3(i) == 0) /*I add, addi, sub */
           y = s ? a - b : a + b;
         else if (rv_if3(i) == 1) /*I sll, slli */
@@ -526,6 +528,7 @@ rv_u32 rv_inst(rv *cpu) { /* single step */
           y = a | b;
         else /*I and, andi */
           y = a & b;
+#if RVM
       } else {              /* mul instructions */
         if (rv_if3(i) == 0) /*I mul */
           y = (rv_u32)((rv_s32)a * (rv_s32)b);
@@ -544,6 +547,7 @@ rv_u32 rv_inst(rv *cpu) { /* single step */
         else /*I remu */
           y = a % b;
       }
+#endif
       rv_sr(cpu, rv_ird(i), y);
     }
 #if RVF
