@@ -384,7 +384,7 @@ int rv_gdb_packet(rv_gdb *gdb) {
   } else if (c == 'c' || c == 's') { /* continue/step */
     rv_u32 addr = 0;
     if ((err = rv_gdb_rx_svwh(gdb, &addr) >= 0)) {
-      rv_gdb_cpu(gdb)->ip = addr;
+      rv_gdb_cpu(gdb)->pc = addr;
     }
     gdb->harts[gdb->hart_idx].state = c == 'c' ? RV_GDB_CONTINUE : RV_GDB_STEP;
     return 1;
@@ -395,7 +395,7 @@ int rv_gdb_packet(rv_gdb *gdb) {
     for (i = 0; i < 32; i++)
       if ((err = rv_gdb_tx_h(gdb, rv_gdb_cpu(gdb)->r[i], 8, 1)))
         return err;
-    if ((err = rv_gdb_tx_h(gdb, rv_gdb_cpu(gdb)->ip, 8, 1)))
+    if ((err = rv_gdb_tx_h(gdb, rv_gdb_cpu(gdb)->pc, 8, 1)))
       return err;
     if ((err = rv_gdb_tx_end(gdb)))
       return err;
