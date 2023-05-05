@@ -22,6 +22,8 @@ typedef unsigned char rv_u8;
 typedef int rv_s32;
 typedef unsigned int rv_u32;
 typedef unsigned long rv_res;
+typedef unsigned long rv_u64;
+typedef signed long rv_s64;
 
 typedef float rv_f32;
 

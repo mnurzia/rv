@@ -509,22 +509,41 @@ rv_u32 rv_inst(rv *cpu) { /* single step */
       rv_u32 b = rv_ioph(i) ? rv_lr(cpu, rv_irs2(i)) : rv_iimm_i(i);
       rv_u32 s = (rv_ioph(i) || rv_if3(i)) ? rv_b(i, 30) : 0, sh = b & 0x1F;
       rv_u32 y;
-      if (rv_if3(i) == 0) /*I add, addi, sub */
-        y = s ? a - b : a + b;
-      else if (rv_if3(i) == 1) /*I sll, slli */
-        y = a << sh;
-      else if (rv_if3(i) == 2) /*I slt, slti */
-        y = rv_ovf(a, b, a - b) != rv_sgn(a - b);
-      else if (rv_if3(i) == 3) /*I sltu, sltiu */
-        y = (a - b) > a;
-      else if (rv_if3(i) == 4) /*I xor, xori */
-        y = a ^ b;
-      else if (rv_if3(i) == 5) /*I srl, srli, sra, srai */
-        y = (a >> sh) | (((rv_u32)0 - (s && (a & RV_SBIT))) << (0x1F - sh));
-      else if (rv_if3(i) == 6) /*I or, ori */
-        y = a | b;
-      else /*I and, andi */
-        y = a & b;
+      if (!rv_b(i, 25)) {
+        if (rv_if3(i) == 0) /*I add, addi, sub */
+          y = s ? a - b : a + b;
+        else if (rv_if3(i) == 1) /*I sll, slli */
+          y = a << sh;
+        else if (rv_if3(i) == 2) /*I slt, slti */
+          y = rv_ovf(a, b, a - b) != rv_sgn(a - b);
+        else if (rv_if3(i) == 3) /*I sltu, sltiu */
+          y = (a - b) > a;
+        else if (rv_if3(i) == 4) /*I xor, xori */
+          y = a ^ b;
+        else if (rv_if3(i) == 5) /*I srl, srli, sra, srai */
+          y = (a >> sh) | (((rv_u32)0 - (s && (a & RV_SBIT))) << (0x1F - sh));
+        else if (rv_if3(i) == 6) /*I or, ori */
+          y = a | b;
+        else /*I and, andi */
+          y = a & b;
+      } else {              /* mul instructions */
+        if (rv_if3(i) == 0) /*I mul */
+          y = (rv_u32)((rv_s32)a * (rv_s32)b);
+        else if (rv_if3(i) == 1) /*I mulh */
+          y = (rv_u32)(((rv_s64)(rv_s32)a * (rv_s64)(rv_s32)b) >> 32);
+        else if (rv_if3(i) == 2) /*I mulhsu */
+          y = (rv_u32)(((rv_s64)(rv_s32)a * (rv_s64)(rv_u64)b) >> 32);
+        else if (rv_if3(i) == 3) /*I mulhu */
+          y = (rv_u32)(((rv_u64)a * (rv_u64)b) >> 32);
+        else if (rv_if3(i) == 4) /*I div */
+          y = (rv_u32)((rv_s32)a / (rv_s32)b);
+        else if (rv_if3(i) == 5) /*I divu */
+          y = a / b;
+        else if (rv_if3(i) == 6) /*I rem */
+          y = (rv_u32)((rv_s32)a % (rv_s32)b);
+        else /*I remu */
+          y = a % b;
+      }
       rv_sr(cpu, rv_ird(i), y);
     }
 #if RVF
