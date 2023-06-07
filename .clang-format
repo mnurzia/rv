@@ -1,0 +1,11 @@
+BasedOnStyle: LLVM
+ColumnLimit: 80
+IndentWidth: 2
+AlignAfterOpenBracket: AlwaysBreak
+PointerAlignment: Left
+ContinuationIndentWidth: 4
+BreakBeforeBraces: Linux
+ReflowComments: true
+AlignArrayOfStructures: Left
+AlignConsecutiveMacros: Consecutive
+AlignTrailingComments: false

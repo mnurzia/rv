@@ -1,5 +1,6 @@
 bin/
 .vscode/
-.clang*
+.clangd
 tests/
 attic/
+.DS_Store
