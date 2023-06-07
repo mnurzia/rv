@@ -3,7 +3,6 @@
 
 #define RVM 1
 #define RVC 1
-#define RVF 1 /* no support for rounding modes other than RNE */
 
 #define RV_VERBOSE 0
 
@@ -36,8 +35,6 @@ typedef unsigned long rv_u64;
 typedef signed long rv_s64;
 #endif
 
-typedef float rv_f32;
-
 #define RV_BAD ((rv_res)1 << 32)
 
 typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr);
@@ -62,10 +59,6 @@ typedef struct rv {
   rv_load_cb load_cb;
   rv_store_cb store_cb;
   rv_u32 r[32];
-#ifdef RVF
-  rv_f32 f[32];
-  rv_u32 fcsr;
-#endif
   rv_u32 pc;
   rv_u32 next_pc;
   void *user;
