@@ -4,8 +4,6 @@
 #define RVM 1
 #define RVC 1
 
-#define RV_VERBOSE 0
-
 #define RV_EIALIGN 1 /* 3.1.15 Machine Cause Register (mcause) */
 #define RV_EIFAULT 2
 #define RV_EILL 3
@@ -41,18 +39,8 @@ typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr);
 typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
 
 typedef struct rv_csrs {
-  rv_u32 mhartid;
-  rv_u32 mstatus;
-  rv_u32 mstatush;
-  rv_u32 mscratch;
-  rv_u32 mepc;
-  rv_u32 mcause;
-  rv_u32 mtval;
-  rv_u32 mip;
-  rv_u32 mtinst;
-  rv_u32 mtval2;
-  rv_u32 mtvec;
-  rv_u32 mie;
+  rv_u32 mhartid, mstatus, mstatush, mscratch, mepc, mcause, mtval, mip, mtinst,
+      mtval2, mtvec, mie;
 } rv_csrs;
 
 typedef struct rv {

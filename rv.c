@@ -2,7 +2,6 @@
 
 #include <assert.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include <string.h>
 
 #define RV_RESET_VEC 0x80000000 /* CPU reset vector */
