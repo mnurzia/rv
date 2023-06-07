@@ -6,7 +6,7 @@
 
 #define RV_VERBOSE 0
 
-#define RV_EIALIGN 1 /* 3.1.16 Machine Cause Register (mcause) */
+#define RV_EIALIGN 1 /* 3.1.15 Machine Cause Register (mcause) */
 #define RV_EIFAULT 2
 #define RV_EILL 3
 #define RV_EBP 4
@@ -31,11 +31,11 @@ typedef unsigned char rv_u8;
 typedef int rv_s32;
 typedef unsigned int rv_u32;
 typedef unsigned long rv_res;
-typedef unsigned long rv_u64;
+typedef unsigned long rv_u64; /* TODO: this isn't very portable... */
 typedef signed long rv_s64;
 #endif
 
-#define RV_BAD ((rv_res)1 << 32)
+#define RV_BAD ((rv_res)1 << 32) /* represents an exceptional value */
 
 typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr);
 typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
@@ -67,6 +67,6 @@ typedef struct rv {
 
 void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb);
 
-rv_u32 rv_inst(rv *cpu);
+rv_u32 rv_inst(rv *cpu); /* returns 0 on success, anything else is exception */
 
 #endif
