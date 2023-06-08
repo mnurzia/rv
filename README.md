@@ -4,7 +4,7 @@ Single header RISC-V emulator written in C89.
 
 Features:
 - `RV32IMC` implementation
-- Passes all supported tests in [riscv-tests](https://github.com/riscv/riscv-tests)
+- Passes all supported tests in [`riscv-tests`](https://github.com/riscv/riscv-tests)
 - ~600 lines of code
 - Doesn't use any datatypes larger than 32 bits
 - Simple API
@@ -35,8 +35,8 @@ int main(void) {
   rv_init(&cpu, (void*)mem, &load_cb, &store_cb);
   while (rv_inst(&cpu) != RV_EECALL) {
     /* handle environment call */
+    printf("Syscall number: %08X\n", cpu.r[17]);
   }
-  /* no destructor for cpu */
 }
 ```
 
