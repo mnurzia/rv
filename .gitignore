@@ -1,6 +1,8 @@
 bin/
 .vscode/
 .clangd
-tests/
+test/vectors
+test/run_test
 attic/
 .DS_Store
+*.dSYM
