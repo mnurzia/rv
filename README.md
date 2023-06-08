@@ -46,6 +46,7 @@ int main(void) {
   while (rv_inst(&cpu) != RV_EECALL) {
   }
   printf("Environment call @ %08X: %u\n", cpu.pc, cpu.r[17]);
+  return 0;
 }
 ```
 
