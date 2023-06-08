@@ -13,30 +13,39 @@ Features:
 ## Usage
 
 ```c
+#include <stdio.h>
+#include <string.h>
+
 #include "rv.h"
 
-rv_res load_cb(void* user, rv_u32 addr, rv_u8* data) {
-  if (addr - 0x80000000 > sizeof mem) /* Reset vector is 0x80000000 */
+rv_res load_cb(void *user, rv_u32 addr, rv_u8 *data) {
+  if (addr - 0x80000000 > 0x10000) /* Reset vector is 0x80000000 */
     return RV_BAD;
-  *data = (rv_u8*)(user)[addr - 0x80000000];
+  *data = ((rv_u8 *)(user))[addr - 0x80000000];
   return RV_OK;
 }
 
-rv_res store_cb(void* user, rv_u32 addr, rv_u8 data) {
-  if (addr - 0x80000000 > sizeof mem)
+rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
+  if (addr - 0x80000000 > 0x10000)
     return RV_BAD;
-  (rv_u8*)(user)[addr - 0x80000000] = data;
+  ((rv_u8 *)(user))[addr - 0x80000000] = data;
   return RV_OK;
 }
+
+rv_u32 program[4] = {
+    /* _start: */
+    0x02A88893, /* add a7, a7, 42 */
+    0x00000073  /* ecall */
+};
 
 int main(void) {
   rv_u8 mem[0x10000];
-  rv_cpu cpu;
-  rv_init(&cpu, (void*)mem, &load_cb, &store_cb);
+  rv cpu;
+  rv_init(&cpu, (void *)mem, &load_cb, &store_cb);
+  memcpy((void *)mem, (void *)program, sizeof(program));
   while (rv_inst(&cpu) != RV_EECALL) {
-    /* handle environment call */
-    printf("Syscall number: %08X\n", cpu.r[17]);
   }
+  printf("Environment call @ %08X: %u\n", cpu.pc, cpu.r[17]);
 }
 ```
 
