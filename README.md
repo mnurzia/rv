@@ -1,6 +1,6 @@
 # rv
 
-Single header RISC-V emulator written in C89.
+RISC-V emulator written in C89.
 
 Features:
 - `RV32IMC` implementation

@@ -204,7 +204,7 @@ rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) { /* 32 x 32 -> 64 bit multiply */
 #define rvc_imm_css(c)                                                         \
   (rv_tbf(c, 8, 7, 6) | rv_tbf(c, 12, 9, 2)) /* CSS imm. for c.swsp */
 
-/* macros to make all instruction types */
+/* macros to make all uncompressed instruction types */
 #define rv_i_i(op, f3, rd, rs1, imm)                                           \
   ((imm) << 20 | (rs1) << 15 | (f3) << 12 | (rd) << 7 | (op) << 2 | 3)
 #define rv_i_s(op, f3, rs1, rs2, imm)                                          \
