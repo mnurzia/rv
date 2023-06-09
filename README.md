@@ -6,9 +6,23 @@ Features:
 - `RV32IMC` implementation
 - Passes all supported tests in [`riscv-tests`](https://github.com/riscv/riscv-tests)
 - ~600 lines of code
-- Doesn't use any datatypes larger than 32 bits
-- Simple API
+- Doesn't use any integer types larger than 32 bits, even for multiplication
+- Simple API (two functions, plus two memory callback functions that you provide)
 - No memory allocations
+
+## API
+
+```c
+/* Memory access callbacks: data is input/output, return RV_BAD on fault, 0 otherwise */
+typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
+typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr, rv_u8 *data);
+
+/* Initialize CPU. */
+void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb);
+
+/* Single-step CPU. Returns 0 on success, one of RV_E* on exception. */
+rv_u32 rv_inst(rv *cpu);
+```
 
 ## Usage
 
