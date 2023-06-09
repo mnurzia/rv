@@ -70,11 +70,11 @@ typedef struct rv {
   rv_csrs csrs;
 } rv;
 
-/* Initialize CPU. */
+/* Initialize CPU. You can call this again on `cpu` to reset it. */
 void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb);
 
 /* Single-step CPU. Returns 0 on success, one of RV_E* on exception. */
-rv_u32 rv_inst(rv *cpu);
+rv_u32 rv_step(rv *cpu);
 
 #endif
 

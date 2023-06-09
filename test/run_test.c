@@ -38,7 +38,7 @@ int main(int argc, const char **argv) {
   fread(mem, 1, sizeof(mem), f);
   rv_init(&cpu, NULL, &load_cb, &store_cb);
   while (1) {
-    rv_u32 v = rv_inst(&cpu);
+    rv_u32 v = rv_step(&cpu);
     if (v == RV_EECALL) {
       return (cpu.r[17] == 93 && !cpu.r[10]) ? EXIT_SUCCESS : EXIT_FAILURE;
     } else if (v && v != RV_EILL) {

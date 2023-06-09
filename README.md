@@ -21,7 +21,7 @@ typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr, rv_u8 *data);
 void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb);
 
 /* Single-step CPU. Returns 0 on success, one of RV_E* on exception. */
-rv_u32 rv_inst(rv *cpu);
+rv_u32 rv_step(rv *cpu);
 ```
 
 ## Usage
@@ -57,7 +57,7 @@ int main(void) {
   rv cpu;
   rv_init(&cpu, (void *)mem, &load_cb, &store_cb);
   memcpy((void *)mem, (void *)program, sizeof(program));
-  while (rv_inst(&cpu) != RV_EECALL) {
+  while (rv_step(&cpu) != RV_EECALL) {
   }
   printf("Environment call @ %08X: %u\n", cpu.pc, cpu.r[17]);
   return 0;

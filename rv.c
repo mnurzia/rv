@@ -304,7 +304,7 @@ rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
 }
 #endif /* RVC */
 
-rv_u32 rv_inst(rv *cpu) {                  /* single step */
+rv_u32 rv_step(rv *cpu) {                  /* single step */
   rv_u32 i, err = rv_lw(cpu, cpu->pc, &i); /* fetch instruction into i */
   if (err)
     rv_dbg("(IF) %08X -> fault\n", cpu->pc);
