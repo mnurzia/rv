@@ -1,6 +1,6 @@
 # rv
 
-RISC-V emulator written in C89.
+RISC-V CPU core written in C89.
 
 Features:
 - `RV32IMC` implementation
@@ -52,7 +52,7 @@ int main(void) {
 
 ## Instructions
 
-Click an instruction to see its implementation.
+Click an instruction to see its implementation in `rv.c`.
 
 - [`add       `](rv.c#L417)[`addi      `](rv.c#L417)[`and       `](rv.c#L431)[`andi      `](rv.c#L431)[`auipc     `](rv.c#L503)[`beq       `](rv.c#L373)[`bge       `](rv.c#L376)[`bgtu      `](rv.c#L378)
 - [`blt       `](rv.c#L375)[`bltu      `](rv.c#L377)[`bne       `](rv.c#L374)[`c.add     `](rv.c#L294)[`c.addi    `](rv.c#L235)[`c.addi16sp`](rv.c#L242)[`c.and     `](rv.c#L263)[`c.andi    `](rv.c#L254)
@@ -65,3 +65,6 @@ Click an instruction to see its implementation.
 - [`sb        `](rv.c#L357)[`sh        `](rv.c#L359)[`sll       `](rv.c#L419)[`slli      `](rv.c#L419)[`slt       `](rv.c#L421)[`slti      `](rv.c#L421)[`sltiu     `](rv.c#L423)[`sltu      `](rv.c#L423)
 - [`sra       `](rv.c#L427)[`srai      `](rv.c#L427)[`srl       `](rv.c#L427)[`srli      `](rv.c#L427)[`sub       `](rv.c#L417)[`sw        `](rv.c#L361)[`xor       `](rv.c#L425)[`xori      `](rv.c#L425)
 
+## Caveats
+
+- Assumes width of integer types in a way that's not completely compliant with C89/99. Fix for this is coming soon, I'm working on a watertight `<stdint.h>` for C89.
