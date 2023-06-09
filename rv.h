@@ -22,10 +22,10 @@
 
 #if __STDC__ && __STDC_VERSION__ >= 199901L /* Attempt to load stdint.h. */
 #include <stdint.h>
-#define RV_U8_TYPE uint8_t /* Yes, I know that these types aren't standard! */
-#define RV_U16_TYPE uint16_t
-#define RV_S32_TYPE int32_t
-#define RV_U32_TYPE uint32_t
+#define RV_U8_TYPE uint8_t   /* Yes, I know that these types are optional. */
+#define RV_U16_TYPE uint16_t /* They *usually* exist. Regardless, rv isn't */
+#define RV_S32_TYPE int32_t  /* meant to be run on systems with */
+#define RV_U32_TYPE uint32_t /* CHAR_BIT != 8 or other weird integer specs. */
 #else
 #ifdef __UINT8_TYPE__
 #define RV_U8_TYPE __UINT8_TYPE__
