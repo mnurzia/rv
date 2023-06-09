@@ -64,7 +64,19 @@ int main(void) {
 }
 ```
 
-## Instructions
+## Targeting `rv`
+
+Use [riscv-gnu-toolchain](https://github.com/riscv-collab/riscv-gnu-toolchain) with [tools/link.ld](tools/link.ld).
+
+Suggested GCC commandline:
+
+`riscv64-unknown-elf-gcc example.S -nostdlib -nostartfiles -Tlink.ld -march=rv32imc -mabi=ilp32 -o example.o -e _start -g -no-pie`
+
+To dump a binary starting at `0x80000000` that can be directly loaded by `rv` as in the above example:
+
+`riscv64-unknown-elf-objcopy -g -O binary example.o example.bin`
+
+## Instruction List
 
 Click an instruction to see its implementation in `rv.c`.
 
@@ -81,4 +93,8 @@ Click an instruction to see its implementation in `rv.c`.
 
 ## Caveats
 
+- Written in C89.
+- Not actually written in C89, since it uses external names longer than 6 characters.
+- Doesn't use any integer types larger than 32 bits, even for multiplication, because it's written in C89.
 - Assumes width of integer types in a way that's not completely compliant with C89/99. Fix for this is coming soon, I'm working on a watertight `<stdint.h>` for C89.
+- Written in C89.
