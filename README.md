@@ -3,7 +3,7 @@
 RISC-V CPU core written in C89.
 
 Features:
-- `RV32IMC` implementation
+- `RV32IMC` privileged implementation
 - Passes all supported tests in [`riscv-tests`](https://github.com/riscv/riscv-tests)
 - ~600 lines of code
 - Doesn't use any integer types larger than 32 bits, even for multiplication
