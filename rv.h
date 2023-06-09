@@ -22,17 +22,28 @@
 
 #if __STDC__ && __STDC_VERSION__ >= 199901L /* Attempt to load stdint.h. */
 #include <stdint.h>
-typedef uint8_t rv_u8;
-typedef uint16_t rv_u16;
-typedef int32_t rv_s32;
-typedef uint32_t rv_u32;
+#define RV_U8_TYPE uint8_t /* Yes, I know that these types aren't standard! */
+#define RV_U16_TYPE uint16_t
+#define RV_S32_TYPE int32_t
+#define RV_U32_TYPE uint32_t
 #else
-/* Assumption: Two's complement arithmetic is used. */
-typedef unsigned char rv_u8;   /* Assumption: CHAR_BIT == 8 */
-typedef unsigned short rv_u16; /* Assumption: sizeof(rv_u16) == 2 */
-typedef int rv_s32;            /* Assumption: sizeof(rv_s32) == 4 */
-typedef unsigned int rv_u32;   /* Assumption: sizeof(rv_u32) == 4 */
+#ifdef __UINT8_TYPE__
+#define RV_U8_TYPE __UINT8_TYPE__
+#define RV_U16_TYPE __UINT16_TYPE__
+#define RV_S32_TYPE __INT32_TYPE__
+#define RV_U32_TYPE __UINT32_TYPE__
+#else
+#define RV_U8_TYPE unsigned char   /* Assumption: CHAR_BIT == 8 */
+#define RV_U16_TYPE unsigned short /* Assumption: sizeof(ushort) == 2 */
+#define RV_S32_TYPE signed int     /* Assumption: sizeof(sint) == 4 */
+#define RV_U32_TYPE unsigned int   /* Assumption: sizeof(uint) == 4 */
 #endif /* (slight) deviations from c89. Sorry {TI, Cray, DEC, et. al.} */
+#endif /* All I want for Christmas is C89 with stdint.h */
+
+typedef RV_U8_TYPE rv_u8;
+typedef RV_U16_TYPE rv_u16;
+typedef RV_S32_TYPE rv_s32;
+typedef RV_U32_TYPE rv_u32;
 
 /* Result type: one of {RV_OK, RV_BAD} */
 typedef rv_u32 rv_res;
