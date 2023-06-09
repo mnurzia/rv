@@ -18,7 +18,7 @@ vectors:
 	find vectors -not -path vectors -name '*' ! -name '*.dmp' -exec bash -c "$(RVOC) -O binary '{}' '{}'" \;
 
 run_test: run_test.c ../rv.c
-	$(CC) run_test.c ../rv.c -g -o run_test
+	$(CC) --std=c89 -Wall -Wextra -pedantic -Wshadow run_test.c ../rv.c -g -o run_test
 
 clean:
 	rm -rf vectors run_test *.dSYM

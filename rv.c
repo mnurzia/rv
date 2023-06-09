@@ -132,7 +132,7 @@ rv_res rv_lcsr(rv *cpu, rv_u32 csr, rv_u32 *out) { /* load csr */
 }
 
 rv_u32 rv_except(rv *cpu, rv_u32 cause) { /* set exception state */
-  /* if mtvec[0], return 4 * cause + mtvec, otherwise just use mtvec */
+  /* if mtvec[0], return 4 * cause + mtvec, otherwise just return mtvec */
   cpu->pc = ~(~cpu->csrs.mtvec | 1) + 4 * (cause - 1) * (cpu->csrs.mtvec & 1);
   return cause;
 }
@@ -228,7 +228,7 @@ rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
       return rv_i_i(0, 2, rvc_irpl(c), rvc_irph(c), rvc_imm_cl(c));
     } else if (rvc_f3(c) == 6) { /*I c.sw -> sw rs2', offset(rs1') */
       return rv_i_s(8, 2, rvc_irph(c), rvc_irpl(c), rvc_imm_cl(c));
-    } else {
+    } else { /* illegal */
       return 0;
     }
   } else if (rvc_op(c) == 1) {
@@ -265,7 +265,7 @@ rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
         } else { /* illegal */
           return 0;
         }
-      } else {
+      } else { /* illegal */
         return 0;
       }
     } else if (rvc_f3(c) == 5) { /*I c.j -> jal x0, offset */
@@ -425,7 +425,7 @@ rv_u32 rv_inst(rv *cpu) {                  /* single step */
         else if (rv_if3(i) == 4) /*I xor, xori */
           y = a ^ b;
         else if (rv_if3(i) == 5) /*I srl, srli, sra, srai */
-          y = (a >> sh) | (((rv_u32)0 - (s && (rv_sgn(a)))) << (0x1F - sh));
+          y = (a >> sh) | ((0U - (s && rv_sgn(a))) << (0x1F - sh));
         else if (rv_if3(i) == 6) /*I or, ori */
           y = a | b;
         else /*I and, andi */
