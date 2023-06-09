@@ -8,9 +8,9 @@
 
 #if RV_VERBOSE
 #include <stdio.h>
-#define rv_printf printf
+#define rv_dbg printf
 #else
-void rv_printf(const char *fmt, ...) {
+void rv_dbg(const char *fmt, ...) {
   (void)fmt;
   return;
 }
@@ -87,75 +87,75 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { /* sign-extend x from h'th bit */
    rv_tb(i, 20, 11) | rv_tbf(i, 30, 21, 1))     /* imm. for J-type */
 #define rv_isz(i) (rv_bf(i, 1, 0) == 3 ? 4 : 2) /* instruction size */
 
-rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; } /* load register */
+rv_u32 rv_lr(rv *cpu, rv_u8 i) { /* load register */
+  return cpu->r[i];
+}
 
 void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) { /* store register */
-  if (i)
-    cpu->r[i] = v;
+  cpu->r[i] = i ? v : 0;
 }
 
 rv_res rv_csr(rv *cpu, rv_u32 csr, rv_u32 v, int w, rv_u32 *out) { /* csr op */
-  rv_u32 *p;
-  rv_u32 mask = (rv_u32)-1; /* all ones */
-  if (csr == 0xF14) {       /*C mhartid */
-    p = &cpu->csrs.mhartid, mask = 0;
+  rv_u32 *y /* output */, mask = (rv_u32)-1; /* all ones */
+  if (csr == 0xF14) {                        /*C mhartid */
+    y = &cpu->csrs.mhartid, mask = 0;
   } else if (csr == 0x305) { /*C mtvec */
-    p = &cpu->csrs.mtvec;
+    y = &cpu->csrs.mtvec;
   } else if (csr == 0x304) { /*C mie */
-    p = &cpu->csrs.mie;
+    y = &cpu->csrs.mie;
   } else if (csr == 0x300) { /*C mstatus */
-    p = &cpu->csrs.mstatus, mask = 0x807FF615;
+    y = &cpu->csrs.mstatus, mask = 0x807FF615;
   } else if (csr == 0x310) { /*C mstatush */
-    p = &cpu->csrs.mstatush, mask = 0x00000030;
+    y = &cpu->csrs.mstatush, mask = 0x00000030;
   } else if (csr == 0x341) { /*C mepc */
-    p = &cpu->csrs.mepc;
+    y = &cpu->csrs.mepc;
   } else if (csr == 0x342) { /*C mcause */
-    p = &cpu->csrs.mcause;
+    y = &cpu->csrs.mcause;
   } else
     return RV_BAD;
-  *out = *p;
+  *out = *y;
   if (w && !mask) /* attempt to write to read-only reg */
     return RV_BAD;
-  if (w)
-    *p = (*p & ~mask) | (v & mask);
+  if (w) /* write relevant bits in v to p */
+    *y = (*y & ~mask) | (v & mask);
   return RV_OK;
 }
 
 rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 *out) { /* store csr */
-  rv_printf("(SCSR) %04X <- %08X\n", csr, v);
-  return rv_csr(cpu, csr, v, 1, out);
+  rv_dbg("(SCSR) %04X <- %08X\n", csr, v);
+  return rv_csr(cpu, csr, v, 1 /* write */, out);
 }
 
 rv_res rv_lcsr(rv *cpu, rv_u32 csr, rv_u32 *out) { /* load csr */
-  rv_printf("(LCSR) %04X\n", csr);
-  return rv_csr(cpu, csr, 0, 0, out);
+  rv_dbg("(LCSR) %04X\n", csr);
+  return rv_csr(cpu, csr, 0, 0 /* read */, out);
 }
 
 rv_u32 rv_except(rv *cpu, rv_u32 cause) { /* set exception state */
-  cpu->pc =
-      (cpu->csrs.mtvec & (rv_u32)~1) + 4 * (cause - 1) * (cpu->csrs.mtvec & 1);
+  /* if mtvec[0], return 4 * cause + mtvec, otherwise just use mtvec */
+  cpu->pc = ~(~cpu->csrs.mtvec | 1) + 4 * (cause - 1) * (cpu->csrs.mtvec & 1);
   return cause;
 }
 
 #ifdef RVM
 
-#define RVM_LO(w) ((w) & (rv_u32)0xFFFFU)
-#define RVM_HI(w) ((w) >> 16)
+#define rvm_lo(w) ((w) & (rv_u32)0xFFFFU) /* low 16 bits of 32-bit word */
+#define rvm_hi(w) ((w) >> 16)             /* high 16 bits of 32-bit word */
 
 rv_u32 rvm_ahh(rv_u32 a, rv_u32 b, rv_u32 cin, rv_u32 *cout) { /* adc 16 bit */
   rv_u32 sum = a + b + cin; /* cin must be less than 2. */
-  *cout = RVM_HI(sum);
-  return RVM_LO(sum);
+  *cout = rvm_hi(sum);
+  return rvm_lo(sum);
 }
 
 rv_u32 rvm_mhh(rv_u32 a, rv_u32 b, rv_u32 *cout) { /* mul 16 bit */
   rv_u32 prod = a * b;
-  *cout = RVM_HI(prod);
-  return RVM_LO(prod);
+  *cout = rvm_hi(prod);
+  return rvm_lo(prod);
 }
 
 rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) { /* 32 x 32 -> 64 bit multiply */
-  rv_u32 al = RVM_LO(a), ah = RVM_HI(a), bl = RVM_LO(b), bh = RVM_HI(b);
+  rv_u32 al = rvm_lo(a), ah = rvm_hi(a), bl = rvm_lo(b), bh = rvm_hi(b);
   rv_u32 qh, ql = rvm_mhh(al, bl, &qh);    /* qh, ql = al * bl      */
   rv_u32 rh, rl = rvm_mhh(al, bh, &rh);    /* rh, rl = al * bh      */
   rv_u32 sh, sl = rvm_mhh(ah, bl, &sh);    /* sh, sl = ah * bl      */
@@ -179,45 +179,42 @@ rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) { /* 32 x 32 -> 64 bit multiply */
 #define rvc_ird(c) rv_bf(c, 11, 7)         /* c. ci-format rd/rs1  */
 #define rvc_irpl(c) rvc_rp(rv_bf(c, 4, 2)) /* c. rd'/rs2' (bits 4-2) */
 #define rvc_irph(c) rvc_rp(rv_bf(c, 9, 7)) /* c. rd'/rs1' (bits 9-7) */
-#define rvc_imm_ciw(c)                                                         \
-  (rv_tbf(c, 10, 7, 6) | rv_tbf(c, 12, 11, 4) | rv_tb(c, 6, 3) |               \
-   rv_tb(c, 5, 2)) /* CIW imm. for c.addi4spn */
-#define rvc_imm_cl(c)                                                          \
-  (rv_tb(c, 5, 6) | rv_tbf(c, 12, 10, 3) |                                     \
-   rv_tb(c, 6, 2)) /* CL imm. for c.lw/c.sw */
-#define rvc_imm_ci(c)                                                          \
-  (rv_signext(rv_tb(c, 12, 5), 5) |                                            \
-   rv_bf(c, 6, 2)) /* CI imm. for c.addi/c.li/c.lui */
-#define rvc_imm_ci_b(c)                                                        \
+#define rvc_imm_ciw(c)                     /* CIW imm. for c.addi4spn */       \
+  (rv_tbf(c, 10, 7, 6) | rv_tbf(c, 12, 11, 4) | rv_tb(c, 6, 3) | rv_tb(c, 5, 2))
+#define rvc_imm_cl(c) /* CL imm. for c.lw/c.sw */                              \
+  (rv_tb(c, 5, 6) | rv_tbf(c, 12, 10, 3) | rv_tb(c, 6, 2))
+#define rvc_imm_ci(c) /* CI imm. for c.addi/c.li/c.lui */                      \
+  (rv_signext(rv_tb(c, 12, 5), 5) | rv_bf(c, 6, 2))
+#define rvc_imm_ci_b(c) /* CI imm. for c.addi16sp */                           \
   (rv_signext(rv_tb(c, 12, 9), 9) | rv_tbf(c, 4, 3, 7) | rv_tb(c, 5, 6) |      \
-   rv_tb(c, 2, 5) | rv_tb(c, 6, 4)) /* CI imm. for c.addi16sp */
-#define rvc_imm_ci_c(c)                                                        \
-  (rv_tbf(c, 3, 2, 6) | rv_tb(c, 12, 5) |                                      \
-   rv_tbf(c, 6, 4, 2)) /* CI imm. for c.lwsp */
-#define rvc_imm_cj(c)                                                          \
+   rv_tb(c, 2, 5) | rv_tb(c, 6, 4))
+#define rvc_imm_ci_c(c) /* CI imm. for c.lwsp */                               \
+  (rv_tbf(c, 3, 2, 6) | rv_tb(c, 12, 5) | rv_tbf(c, 6, 4, 2))
+#define rvc_imm_cj(c) /* CJ imm. for c.jalr/c.j */                             \
   (rv_signext(rv_tb(c, 12, 11), 11) | rv_tb(c, 8, 10) | rv_tbf(c, 10, 9, 8) |  \
    rv_tb(c, 6, 7) | rv_tb(c, 7, 6) | rv_tb(c, 2, 5) | rv_tb(c, 11, 4) |        \
-   rv_tbf(c, 5, 3, 1)) /* CJ imm. for c.jalr/c.j */
-#define rvc_imm_cb(c)                                                          \
+   rv_tbf(c, 5, 3, 1))
+#define rvc_imm_cb(c) /* CB imm. for c.beqz/c.bnez */                          \
   (rv_signext(rv_tb(c, 12, 8), 8) | rv_tbf(c, 6, 5, 6) | rv_tb(c, 2, 5) |      \
-   rv_tbf(c, 11, 10, 3) | rv_tbf(c, 4, 3, 1)) /* CB imm. for c.beqz/c.bnez */
-#define rvc_imm_css(c)                                                         \
-  (rv_tbf(c, 8, 7, 6) | rv_tbf(c, 12, 9, 2)) /* CSS imm. for c.swsp */
+   rv_tbf(c, 11, 10, 3) | rv_tbf(c, 4, 3, 1))
+#define rvc_imm_css(c) /* CSS imm. for c.swsp */                               \
+  (rv_tbf(c, 8, 7, 6) | rv_tbf(c, 12, 9, 2))
 
 /* macros to make all uncompressed instruction types */
-#define rv_i_i(op, f3, rd, rs1, imm)                                           \
+#define rv_i_i(op, f3, rd, rs1, imm) /* I-type */                              \
   ((imm) << 20 | (rs1) << 15 | (f3) << 12 | (rd) << 7 | (op) << 2 | 3)
-#define rv_i_s(op, f3, rs1, rs2, imm)                                          \
+#define rv_i_s(op, f3, rs1, rs2, imm) /* S-type */                             \
   (rv_bf(imm, 11, 5) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 |          \
    rv_bf(imm, 4, 0) << 7 | (op) << 2 | 3)
-#define rv_i_u(op, rd, imm) ((imm) << 12 | (rd) << 7 | (op) << 2 | 3)
-#define rv_i_r(op, f3, rd, rs1, rs2, f7)                                       \
+#define rv_i_u(op, rd, imm) /* U-type */                                       \
+  ((imm) << 12 | (rd) << 7 | (op) << 2 | 3)
+#define rv_i_r(op, f3, rd, rs1, rs2, f7) /* R-type */                          \
   ((f7) << 25 | (rs2) << 20 | (rs1) << 15 | (f3) << 12 | (rd) << 7 |           \
    (op) << 2 | 3)
-#define rv_i_j(op, rd, imm)                                                    \
+#define rv_i_j(op, rd, imm) /* J-type */                                       \
   (rv_b(imm, 20) << 31 | rv_bf(imm, 10, 1) << 21 | rv_b(imm, 11) << 20 |       \
    rv_bf(imm, 19, 12) << 12 | (rd) << 7 | (op) << 2 | 3)
-#define rv_i_b(op, f3, rs1, rs2, imm)                                          \
+#define rv_i_b(op, f3, rs1, rs2, imm) /* B-type */                             \
   (rv_b(imm, 12) << 31 | rv_bf(imm, 10, 5) << 25 | (rs2) << 20 | (rs1) << 15 | \
    (f3) << 12 | rv_bf(imm, 4, 1) << 8 | rv_b(imm, 11) << 7 | (op) << 2 | 3)
 
@@ -307,13 +304,13 @@ rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
 }
 #endif /* RVC */
 
-rv_u32 rv_inst(rv *cpu) {                   /* single step */
-  rv_u32 i, ires = rv_lw(cpu, cpu->pc, &i); /* fetch instruction -> i */
-  if (ires)
-    rv_printf("(IF) %08X -> fault\n", cpu->pc);
+rv_u32 rv_inst(rv *cpu) {                  /* single step */
+  rv_u32 i, err = rv_lw(cpu, cpu->pc, &i); /* fetch instruction into i */
+  if (err)
+    rv_dbg("(IF) %08X -> fault\n", cpu->pc);
   else
-    rv_printf("(IF) %08X -> %08X\n", cpu->pc, i);
-  if (ires)
+    rv_dbg("(IF) %08X -> %08X\n", cpu->pc, i);
+  if (err)
     return rv_except(cpu, RV_EIFAULT);
   cpu->next_pc = cpu->pc + rv_isz(i);
 #if RVC
@@ -323,12 +320,11 @@ rv_u32 rv_inst(rv *cpu) {                   /* single step */
   if (rv_iopl(i) == 0) {
     if (rv_ioph(i) == 0) { /*Q 00/000: LOAD */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
-      rv_u32 v /* loaded value */, err;
+      rv_u32 v;     /* loaded value */
       rv_u16 tmp16; /* temporary for 16-bit loads */
-      rv_u8 tmp8;   /* temporary for 8-bit loads */
-      static const char *load_types[] = {"b",  "h",  "w",  "XX",
-                                         "bu", "hu", "XX", "XX"};
-      rv_printf("(L%s) %08X -> ", load_types[rv_if3(i)], addr);
+      rv_u8 tmp8;   /* temporary for  8-bit loads */
+      rv_dbg("(L%.2s) %08X -> ",
+             (const char *)"b\0h\0w\0XXbuhuXXXX" + 2 * rv_if3(i), addr);
       if (rv_if3(i) == 0) { /*I lb */
         err = rv_lb(cpu, addr, &tmp8);
         v = rv_signext((rv_u32)tmp8, 7);
@@ -346,33 +342,28 @@ rv_u32 rv_inst(rv *cpu) {                   /* single step */
       } else
         return rv_except(cpu, RV_EILL);
       if (err)
-        rv_printf("fault\n");
+        rv_dbg("fault\n");
       else
-        rv_printf("%08X\n", v);
+        rv_dbg("%08X\n", v);
       if (err)
         return rv_except(cpu, RV_ELFAULT);
       else
         rv_sr(cpu, rv_ird(i), v);
     } else if (rv_ioph(i) == 1) { /*Q 01/000: STORE */
       rv_u32 addr = rv_lr(cpu, rv_irs1(i)) + rv_iimm_s(i);
-      rv_res res;
-      static const char *store_types[] = {"b",  "h",  "w",  "XX",
-                                          "XX", "XX", "XX", "XX"};
-      rv_printf("(S%s) %08X <- %08X", store_types[rv_if3(i)], addr,
-                rv_lr(cpu, rv_irs2(i)));
+      rv_dbg("(S%.2s) %08X <- %08X",
+             (char *)"b\0h\0w\0XXXXXXXXXX" + 2 * rv_if3(i), addr,
+             rv_lr(cpu, rv_irs2(i)));
       if (rv_if3(i) == 0) { /*I sb */
-        res = rv_sb(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFF);
+        err = rv_sb(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFF);
       } else if (rv_if3(i) == 1) { /*I sh */
-        res = rv_sh(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFFFF);
+        err = rv_sh(cpu, addr, rv_lr(cpu, rv_irs2(i)) & 0xFFFF);
       } else if (rv_if3(i) == 2) { /*I sw */
-        res = rv_sw(cpu, addr, rv_lr(cpu, rv_irs2(i)));
+        err = rv_sw(cpu, addr, rv_lr(cpu, rv_irs2(i)));
       } else
         return rv_except(cpu, RV_EILL);
-      if (res)
-        rv_printf("-> fault\n");
-      else
-        rv_printf("\n");
-      if (res)
+      rv_dbg(err ? "-> fault\n" : "\n");
+      if (err)
         return rv_except(cpu, RV_ESFAULT);
     } else if (rv_ioph(i) == 3) { /*Q 11/000: BRANCH */
       rv_u32 a = rv_lr(cpu, rv_irs1(i)), b = rv_lr(cpu, rv_irs2(i));

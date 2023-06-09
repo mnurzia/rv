@@ -3,7 +3,7 @@
 #define MN_RV_H
 
 /* Set to 1 for extremely fine-grained debug output. */
-#define RV_VERBOSE 0
+#define RV_VERBOSE 1
 
 /* Enabled extensions. */
 #define RVM 1 /* Multiplication and Division */
