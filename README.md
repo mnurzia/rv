@@ -1,6 +1,6 @@
 # rv
 
-RISC-V CPU core written in C89.
+RISC-V CPU core written in ANSI C.
 
 Features:
 - `RV32IMC` user-level implementation
