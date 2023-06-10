@@ -27,7 +27,7 @@
 #define RV_S32_TYPE int32_t  /* meant to be run on systems with */
 #define RV_U32_TYPE uint32_t /* CHAR_BIT != 8 or other weird integer specs. */
 #else
-#ifdef __UINT8_TYPE__
+#ifdef __UINT8_TYPE__ /* If these are here, we might as well use them. */
 #define RV_U8_TYPE __UINT8_TYPE__
 #define RV_U16_TYPE __UINT16_TYPE__
 #define RV_S32_TYPE __INT32_TYPE__

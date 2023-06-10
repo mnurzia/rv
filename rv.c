@@ -62,12 +62,14 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { /* sign-extend x from h'th bit */
 #define rv_ovf(a, b, y) ((((a) ^ (b)) & RV_SBIT) && (((y) ^ (a)) & RV_SBIT))
 
 #define rv_bf(i, h, l)                                                         \
-  (((i) >> (l)) & ((1 << ((h) - (l) + 1)) - 1))       /* extract bit field */
-#define rv_b(i, l) rv_bf(i, l, l)                     /* extract bit */
-#define rv_tb(i, l, o) (rv_b(i, l) << (o))            /* translate bit */
-#define rv_tbf(i, h, l, o) (rv_bf(i, h, l) << (o))    /* translate bit field */
-#define rv_ioph(i) rv_bf(i, 6, 5)                     /* opcode[6:5] */
-#define rv_iopl(i) rv_bf(i, 4, 2)                     /* opcode[4:2] */
+  (((i) >> (l)) & ((1 << ((h) - (l) + 1)) - 1))    /* extract bit field */
+#define rv_b(i, l) rv_bf(i, l, l)                  /* extract bit */
+#define rv_tb(i, l, o) (rv_b(i, l) << (o))         /* translate bit */
+#define rv_tbf(i, h, l, o) (rv_bf(i, h, l) << (o)) /* translate bit field */
+
+/* instruction field macros */
+#define rv_ioph(i) rv_bf(i, 6, 5)                     /* [h]i bits of opcode */
+#define rv_iopl(i) rv_bf(i, 4, 2)                     /* [l]o bits of opcode */
 #define rv_if3(i) rv_bf(i, 14, 12)                    /* funct3 */
 #define rv_if7(i) rv_bf(i, 31, 25)                    /* funct7 */
 #define rv_ird(i) rv_bf(i, 11, 7)                     /* rd */
