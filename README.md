@@ -91,6 +91,19 @@ Click an instruction to see its implementation in `rv.c`.
 - [`sb        `](rv.c#L359)[`sh        `](rv.c#L361)[`sll       `](rv.c#L421)[`slli      `](rv.c#L421)[`slt       `](rv.c#L423)[`slti      `](rv.c#L423)[`sltiu     `](rv.c#L425)[`sltu      `](rv.c#L425)
 - [`sra       `](rv.c#L429)[`srai      `](rv.c#L429)[`srl       `](rv.c#L429)[`srli      `](rv.c#L429)[`sub       `](rv.c#L419)[`sw        `](rv.c#L363)[`xor       `](rv.c#L427)[`xori      `](rv.c#L427)
 
+## FAQ
+
+### Spaghetti code!
+
+- `rv` tries to strike a good balance between conciseness and readability. Of course, being able to read this code at all requires prior intimiate knowledge of the ISA encoding.
+
+### No switch statements!
+
+- C only allows constant expressions in switch statements. In addition to an abundance of `break` statements using these would result in more bloated code in the author's opinion.
+
+### Not useful!
+- [Ok](https://www.google.com/search?q=happy+smiley+thumbs+up+happy+cool+funny+ok&tbm=isch)
+
 ## Caveats
 
 - Written in C89.
