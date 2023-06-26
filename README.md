@@ -95,11 +95,11 @@ Click an instruction to see its implementation in `rv.c`.
 
 ### Spaghetti code!
 
-- `rv` tries to strike a good balance between conciseness and readability. Of course, being able to read this code at all requires prior intimiate knowledge of the ISA encoding.
+- `rv` tries to strike a good balance between conciseness and readability. Of course, being able to read this code at all requires intimate prior knowledge of the ISA encoding.
 
 ### No switch statements!
 
-- C only allows constant expressions in switch statements. In addition to an abundance of `break` statements using these would result in more bloated code in the author's opinion.
+- C only allows constant expressions in switch statements. In addition to an abundance of `break` statements using these would result in more bloated code in the author's opinion. You are free to reimplement this code with switch statements. See [LICENSE.txt](LICENSE.txt).
 
 ### Not useful!
 - [Ok](https://www.google.com/search?q=happy+smiley+thumbs+up+happy+cool+funny+ok&tbm=isch)
