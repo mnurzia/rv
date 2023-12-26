@@ -1,24 +1,29 @@
-/* RV32I[MC] emulator. */
+/* RV32I[MAC] emulator. */
 #ifndef MN_RV_H
 #define MN_RV_H
 
 /* Set to 1 for extremely fine-grained debug output. */
-#define RV_VERBOSE 1
+/*#define RV_VERBOSE 0*/
 
 /* Enabled extensions. */
-#define RVM 1 /* Multiplication and Division */
+#define RVA 1 /* Atomics */
 #define RVC 1 /* Compressed Instructions */
+#define RVM 1 /* Multiplication and Division */
 
 /* Exception list. */
-#define RV_EIALIGN 1 /* Instruction alignment exception. */
-#define RV_EIFAULT 2 /* Instruction fault exception. */
-#define RV_EILL 3    /* Illegal instruction exception. */
-#define RV_EBP 4     /* Breakpoint. */
-#define RV_ELALIGN 5 /* Load alignment exception. */
-#define RV_ELFAULT 6 /* Load fault. */
-#define RV_ESALIGN 7 /* Store alignment exception. */
-#define RV_ESFAULT 8 /* Store fault. */
-#define RV_EECALL 9  /* Environment call. */
+#define RV_EIALIGN 1  /* Instruction alignment exception. */
+#define RV_EIFAULT 2  /* Instruction fault exception. */
+#define RV_EILL 3     /* Illegal instruction exception. */
+#define RV_EBP 4      /* Breakpoint. */
+#define RV_ELALIGN 5  /* Load alignment exception. */
+#define RV_ELFAULT 6  /* Load fault. */
+#define RV_ESALIGN 7  /* Store alignment exception. */
+#define RV_ESFAULT 8  /* Store fault. */
+#define RV_EUECALL 9  /* Environment call from U-mode. */
+#define RV_ESECALL 10 /* Environment call from S-mode. */
+#define RV_EIPAGE 13  /* Instruction page fault. */
+#define RV_ELPAGE 14  /* Load page fault. */
+#define RV_ESPAGE 16  /* Store page fault. */
 
 #if __STDC__ && __STDC_VERSION__ >= 199901L /* Attempt to load stdint.h. */
 #include <stdint.h>
@@ -50,15 +55,20 @@ typedef rv_u32 rv_res;
 
 #define RV_OK 0
 #define RV_BAD 1
+#define RV_PAGEFAULT 2
 
 typedef struct rv_csrs {
-  rv_u32 mhartid, mstatus, mstatush, mscratch, mepc, mcause, mtval, mip, mtinst,
-      mtval2, mtvec, mie;
+  rv_u32 mhartid, mstatus, mstatush, mscratch, mepc, mcause, mtval, mip, mtvec,
+      mie, misa, mvendorid, marchid, mimpid, medeleg, mideleg;
+  rv_u32 satp, stvec, sscratch, sepc, scause, stval;
 } rv_csrs;
 
 /* Memory access callbacks: data is input/output, return RV_BAD on fault */
 typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
 typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr, rv_u8 *data);
+
+typedef enum rv_priv { RV_PUSER = 0, RV_PSUPER = 1, RV_PMACHINE = 3 } rv_priv;
+typedef enum rv_access { RV_AR = 1, RV_AW = 2, RV_AX = 4 } rv_access;
 
 typedef struct rv {
   rv_load_cb load_cb;
@@ -68,6 +78,10 @@ typedef struct rv {
   rv_u32 next_pc;
   void *user;
   rv_csrs csrs;
+  rv_u32 priv;
+#if RVA
+  rv_u32 reserve, reserve_valid;
+#endif
 } rv;
 
 /* Initialize CPU. You can call this again on `cpu` to reset it. */
