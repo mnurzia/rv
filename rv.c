@@ -106,8 +106,12 @@ rv_res rv_csr(rv *cpu, rv_u32 csr, rv_u32 v, int w, rv_u32 *out) { /* csr op */
     return RV_BAD;
   if (csr == 0x100) { /*C sstatus */
     y = &cpu->csrs.mstatus, wmask = rmask = 0x800DE762;
+  } else if (csr == 0x104) { /*C sie */
+    y = &cpu->csrs.sie;
   } else if (csr == 0x105) { /*C stvec */
     y = &cpu->csrs.stvec;
+  } else if (csr == 0x106) { /*C scounteren */
+    y = &cpu->csrs.scounteren, wmask = 0;
   } else if (csr == 0x140) { /*C sscratch */
     y = &cpu->csrs.sscratch;
   } else if (csr == 0x141) { /*C sepc */
@@ -116,6 +120,8 @@ rv_res rv_csr(rv *cpu, rv_u32 csr, rv_u32 v, int w, rv_u32 *out) { /* csr op */
     y = &cpu->csrs.scause;
   } else if (csr == 0x143) { /*C stval */
     y = &cpu->csrs.stval;
+  } else if (csr == 0x144) { /*C sip */
+    y = &cpu->csrs.sip;
   } else if (csr == 0x180) { /*C satp */
     y = &cpu->csrs.satp;
   } else if (csr == 0xF12) { /*C marchid */
@@ -447,27 +453,15 @@ rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
 rv_u32 rv_if(rv *cpu, rv_u32 *i) {
   rv_u32 err;
   rv_u32 pa;
-#if RVC
-  rv_u16 half;
-#endif
   if ((err = rv_vmm_sv32(cpu, cpu->pc, &pa, RV_AX)))
     return err;
-#if RVC
-  if ((err = rv_lh(cpu, pa, &half)))
-    return err;
-  *i = half;
-  if (rv_isz(*i) != 4) {
-    *i = rvc_inst(*i & 0xFFFF);
-  } else {
-    if ((err = rv_lh(cpu, pa + 2, &half)))
-      return err;
-    *i |= (rv_u32)half << 16;
-  }
-#else
   if ((err = rv_lw(cpu, pa, i)))
     return err;
-#endif
   cpu->next_pc = cpu->pc + rv_isz(*i);
+#if RVC
+  if (rv_isz(*i) < 4)
+    *i = rvc_inst(*i & 0xFFFF);
+#endif
   return RV_OK;
 }
 
@@ -740,6 +734,8 @@ rv_u32 rv_step(rv *cpu) {         /* single step */
               mprv = 0;
             cpu->csrs.mstatus |= mprv << 17;
             cpu->next_pc = cpu->csrs.sepc;
+          } else if (rv_irs2(i) == 5 && rv_if7(i) == 8) { /*I wfi */
+            rv_dbg("(WFI)\n");
           } else if (rv_if7(i) == 9) { /*I sfence.vma */
           } else if (!rv_irs1(i) && !rv_irs2(i) && !rv_if7(i)) { /*I ecall */
             return rv_except(cpu, RV_EUECALL);

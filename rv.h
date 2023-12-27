@@ -60,7 +60,8 @@ typedef rv_u32 rv_res;
 typedef struct rv_csrs {
   rv_u32 mhartid, mstatus, mstatush, mscratch, mepc, mcause, mtval, mip, mtvec,
       mie, misa, mvendorid, marchid, mimpid, medeleg, mideleg;
-  rv_u32 satp, stvec, sscratch, sepc, scause, stval;
+  rv_u32 /* sstatus, */ sie, stvec, scounteren, senvcfg, sscratch, sepc, scause,
+      stval, sip, satp, scontext;
 } rv_csrs;
 
 /* Memory access callbacks: data is input/output, return RV_BAD on fault */

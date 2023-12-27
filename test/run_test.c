@@ -34,11 +34,13 @@ int main(int argc, const char **argv) {
   if (argc < 2)
     die("expected test name");
   f = fopen(argv[1], "r");
+  if (!f)
+    die("couldn't open test");
   (void)argc;
   memset(mem, 0, sizeof(mem));
   fread(mem, 1, sizeof(mem), f);
   rv_init(&cpu, NULL, &load_cb, &store_cb);
-  while (1 && ninstr++ < 300) {
+  while (1 && ninstr++ < 30000) {
     rv_u32 v = rv_step(&cpu);
     if (v == RV_EUECALL) {
       if (cpu.r[17] == 93 && !cpu.r[10]) {
@@ -46,4 +48,5 @@ int main(int argc, const char **argv) {
       }
     }
   }
+  return EXIT_FAILURE;
 }

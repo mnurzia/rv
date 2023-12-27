@@ -3,6 +3,7 @@ bin/
 .clangd
 test/vectors
 test/run_test
+test/run_test_debug
 attic/
 .DS_Store
 *.dSYM

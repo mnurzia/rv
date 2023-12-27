@@ -8,6 +8,6 @@ for test in tests:
     print(test, end="", flush=True)
     p = subprocess.run(["./run_test", test], timeout=2, capture_output=True)
     if p.returncode != 0:
-        print("...FAIL")
+        print("...\x1b[31mFAIL\x1b[0m")
     else:
-        print("...OK")
+        print("...\x1b[32mOK\x1b[0m")
