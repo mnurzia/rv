@@ -21,6 +21,7 @@
 #define RV_ESFAULT 8  /* Store fault. */
 #define RV_EUECALL 9  /* Environment call from U-mode. */
 #define RV_ESECALL 10 /* Environment call from S-mode. */
+#define RV_EMECALL 12 /* Environment call from M-mode. */
 #define RV_EIPAGE 13  /* Instruction page fault. */
 #define RV_ELPAGE 14  /* Load page fault. */
 #define RV_ESPAGE 16  /* Store page fault. */
@@ -59,21 +60,21 @@ typedef rv_u32 rv_res;
 
 typedef struct rv_csrs {
   rv_u32 mhartid, mstatus, mstatush, mscratch, mepc, mcause, mtval, mip, mtvec,
-      mie, misa, mvendorid, marchid, mimpid, medeleg, mideleg;
+      mie, misa, mvendorid, marchid, mimpid, medeleg, mideleg, mcounteren,
+      mtime, mtimeh;
   rv_u32 /* sstatus, */ sie, stvec, scounteren, senvcfg, sscratch, sepc, scause,
       stval, sip, satp, scontext;
 } rv_csrs;
 
-/* Memory access callbacks: data is input/output, return RV_BAD on fault */
-typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
-typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr, rv_u8 *data);
+/* Memory access callback: data is input/output, return RV_BAD on fault */
+typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u32 *data, rv_u32 str);
 
 typedef enum rv_priv { RV_PUSER = 0, RV_PSUPER = 1, RV_PMACHINE = 3 } rv_priv;
 typedef enum rv_access { RV_AR = 1, RV_AW = 2, RV_AX = 4 } rv_access;
+typedef enum rv_cause { RV_CSW = 1, RV_CTIM = 2, RV_CEXT = 4 } rv_cause;
 
 typedef struct rv {
-  rv_load_cb load_cb;
-  rv_store_cb store_cb;
+  rv_bus_cb bus_cb;
   rv_u32 r[32];
   rv_u32 pc;
   rv_u32 next_pc;
@@ -86,10 +87,13 @@ typedef struct rv {
 } rv;
 
 /* Initialize CPU. You can call this again on `cpu` to reset it. */
-void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb);
+void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 
 /* Single-step CPU. Returns 0 on success, one of RV_E* on exception. */
 rv_u32 rv_step(rv *cpu);
+
+/* Trigger an interrupt. */
+rv_u32 rv_irq(rv *cpu, rv_cause cause);
 
 #endif
 
