@@ -9,40 +9,42 @@ void die(const char *msg) {
   exit(1);
 }
 
-rv_u8 mem[0x10000];
+rv_u32 mem[0x10000 / 4];
 
-rv_res load_cb(void *user, rv_u32 addr, rv_u8 *data) {
+rv_res bus_cb(void *user, rv_u32 addr, rv_u32 *data, rv_u32 store) {
+  rv_u32 *ptr = mem + ((addr - 0x80000000) >> 2);
+  (void)(user);
   if (addr < 0x80000000 || addr >= 0x80000000 + sizeof(mem))
     return RV_BAD;
-  (void)user;
-  *data = mem[addr - 0x80000000];
-  return 0;
-}
-
-rv_res store_cb(void *user, rv_u32 addr, rv_u8 val) {
-  if (addr < 0x80000000 || addr >= 0x80000000 + sizeof(mem))
-    return RV_BAD;
-  (void)user;
-  mem[addr - 0x80000000] = val;
+  if (store)
+    *ptr = *data;
+  else
+    *data = *ptr;
   return 0;
 }
 
 int main(int argc, const char **argv) {
   FILE *f;
   rv cpu;
-  size_t ninstr = 0;
+  unsigned long limit = 0, ninstr = 0;
   if (argc < 2)
     die("expected test name");
   f = fopen(argv[1], "r");
   if (!f)
     die("couldn't open test");
+  if (argc == 3) {
+    char *end;
+    limit = strtoul(argv[2], &end, 10);
+    if (!end)
+      die("invalid number of instructions");
+  }
   (void)argc;
   memset(mem, 0, sizeof(mem));
   fread(mem, 1, sizeof(mem), f);
-  rv_init(&cpu, NULL, &load_cb, &store_cb);
-  while (1 && ninstr++ < 30000) {
+  rv_init(&cpu, NULL, &bus_cb);
+  while (1 && (!limit || ninstr++ < limit)) {
     rv_u32 v = rv_step(&cpu);
-    if (v == RV_EUECALL) {
+    if (v == RV_EMECALL || v == RV_EUECALL || v == RV_ESECALL) {
       if (cpu.r[17] == 93 && !cpu.r[10]) {
         return EXIT_SUCCESS;
       }

@@ -28,5 +28,13 @@ run_test_debug: run_test.c ../rv.c
 rv32%: vectors run_test_debug
 	./run_test_debug vectors/$@
 
+machine: machine.c ../rv.c ../rv.h ../rv_clint.c ../rv_clint.h ../rv_uart.c ../rv_uart.h ../rv_plic.c ../rv_plic.h
+	rm -rf machine
+	$(CC) --std=c89 -Wall -Wextra -pedantic -Wshadow machine.c ../rv.c ../rv_clint.c ../rv_plic.c ../rv_uart.c -g -o machine -DRV_VERBOSE
+
+machine-quiet: machine.c ../rv.c ../rv.h ../rv_clint.c ../rv_clint.h ../rv_uart.c ../rv_uart.h ../rv_plic.c ../rv_plic.h
+	rm -rf machine-quiet
+	$(CC) --std=c89 -Wall -Wextra -pedantic -Wshadow machine.c ../rv.c ../rv_clint.c ../rv_plic.c ../rv_uart.c -g -o machine-quiet
+
 clean:
 	rm -rf vectors run_test run_test_debug *.dSYM
