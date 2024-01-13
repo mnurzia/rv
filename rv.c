@@ -403,32 +403,35 @@ rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
 }
 #endif /* RVC */
 
-rv_u32 rv_if(rv *cpu, rv_u32 *i) {
-  rv_u32 err;
-  rv_u32 pa;
-  if ((err = rv_vmm(cpu, cpu->pc, &pa, RV_AX)))
+rv_u32 rv_bus(rv *cpu, rv_u32 va, rv_u8 *data, rv_u32 width, rv_access access) {
+  rv_u32 err, pa;
+  if ((err = rv_vmm(cpu, va, &pa, access)))
     return err;
-  if ((err = rv_lw(cpu, pa & (~3U), i)))
-    return err;
-  if (pa & 2) {
-    rv_u32 i2;
-    *i >>= 16;
-    if (rv_isz(*i) == 4) {
-      rv_u32 addr = (pa & (~3U));
-      rv_u32 next_addr = addr + 4;
-      pa += 4;
-      if ((addr ^ next_addr) & ~0xFFFU) /* instruction straddling page bound */
-        if ((err = rv_vmm(cpu, cpu->pc + 2, &pa, RV_AX))) {
-          cpu->pc += 2; /* correctly report pc for exceptions */
-          return err;
-        }
-      if ((err = rv_lw(cpu, pa & ~3U, &i2))) {
-        cpu->pc += 2; /* correctly report pc for exceptions */
-        return err;
-      }
-      *i |= (i2 << 16);
-    }
+  if (((pa + width - 1) ^ pa) & ~0xFFFU) /* page bound overrun */ {
+    rv_u32 w0 = 0x1000 - (va & 0xFFF);
+    if ((err = cpu->bus_cb(cpu->user, pa, data, access == RV_AW, w0)))
+      return err;
+    width -= w0, va += w0, data += w0;
+    if ((err = rv_vmm(cpu, va, &pa, access == RV_AW)))
+      return err;
   }
+  return cpu->bus_cb(cpu->user, pa, data, 0, width);
+}
+
+rv_u32 rv_if(rv *cpu, rv_u32 *i) {
+  rv_u32 err, bound = (cpu->pc ^ (cpu->pc + 3)) & ~0xFFFU;
+  if (bound) {
+    rv_u16 ia, ib = 0;
+    if ((err = rv_bus(cpu, cpu->pc, (rv_u8 *)&ia, 2, RV_AX)))
+      return err;
+    if (rv_isz(ia) == 4 &&
+        (err = rv_bus(cpu, cpu->pc + 2, (rv_u8 *)&ib, 2, RV_AX))) {
+      cpu->pc += 2;
+      return err;
+    }
+    *i = (rv_u32)ia | (rv_u32)ib << 16U;
+  } else if ((err = rv_bus(cpu, cpu->pc, (rv_u8 *)i, 4, RV_AX)))
+    return err;
   cpu->next_pc = cpu->pc + rv_isz(*i);
 #if RVC
   if (rv_isz(*i) < 4)
@@ -447,34 +450,21 @@ rv_u32 rv_step(rv *cpu) {         /* single step */
     return rv_except(cpu, err == RV_BAD ? RV_EIFAULT : RV_EIPAGE, cpu->pc);
   if (rv_iopl(i) == 0) {
     if (rv_ioph(i) == 0) { /*Q 00/000: LOAD */
-      rv_u32 va = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i), pa = va;
-      rv_u32 v, v2; /* loaded value, second loaded value if on align bound */
-      rv_u32 w, w2; /* value width (bytes), width of value in second word */
-      int sx = 0;   /* whether or not to sign extend */
+      rv_u32 va = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
+      rv_u32 v = 0 /* loaded value */, w /* value width */, sx /* sign ext. */;
       rv_dbg("(L%.2s) %08X -> ",
              (const char *)"b\0h\0w\0XXbuhuXXXX" + 2 * rv_if3(i), va);
-      if ((err = rv_vmm(cpu, va, &pa, RV_AR)))
+      w = 1 << (rv_if3(i) & 3), sx = ~rv_if3(i) & 4; /*I lb, lh, lw, lbu, lhu */
+      if ((err = rv_bus(cpu, va, (rv_u8 *)&v, w, RV_AR)))
         return rv_except(cpu, err == RV_BAD ? RV_ELFAULT : RV_ELPAGE, va);
       if ((rv_if3(i) & 3) == 3)
         return rv_except(cpu, RV_EILL, cpu->pc);
-      w = 1 << (rv_if3(i) & 3), sx = ~rv_if3(i) & 4; /*I lb, lh, lw, lbu, lhu */
-      err = rv_lw(cpu, pa & ~3U, &v); /* load first word (aligned) */
-      v = (v >> (pa & 3) * 8) & ((w != 4) * (1 << w * 8)) - 1U;
-      if ((pa & ~3U) != (pa + w - 1 & ~3U) && !err) { /* misalignment */
-        va += w;
-        if ((err = rv_vmm(cpu, va, &pa, RV_AR)))
-          return rv_except(cpu, err == RV_BAD ? RV_ELFAULT : RV_ELPAGE, va);
-        err = rv_lw(cpu, pa & ~3U, &v2), w2 = pa & 3U;
-        v |= ((v2 & (1 << 8 * w2) - 1) << 8 * (w - w2));
-      }
       if (sx)
         v = rv_signext(v, (w * 8 - 1));
       if (err)
         rv_dbg("fault\n");
       else
         rv_dbg("%08X\n", v);
-      if (err)
-        return rv_except(cpu, RV_ELFAULT, va);
       rv_sr(cpu, rv_ird(i), v);
     } else if (rv_ioph(i) == 1) { /*Q 01/000: STORE */
       rv_u32 va = rv_lr(cpu, rv_irs1(i)) + rv_iimm_s(i), pa = va;
