@@ -5,9 +5,10 @@
 
 void rv_plic_init(rv_plic *plic) { memset(plic, 0, sizeof(*plic)); }
 
-rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u32 *data, rv_u32 store) {
-  rv_u32 *reg = NULL, wmask = 0 - 1U;
-  if (addr >= 0x4000000)
+rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 store,
+                   rv_u32 width) {
+  rv_u32 *reg = NULL, wmask = 0 - 1U, *data = (rv_u32 *)d;
+  if (addr >= 0x4000000 || width != 4)
     return RV_BAD;
   else if (addr >= 0 &&
            addr < RV_PLIC_NSRC * 4) /*R Interrupt Source Priority */

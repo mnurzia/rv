@@ -417,12 +417,12 @@ rv_u32 rv_if(rv *cpu, rv_u32 *i) {
       rv_u32 addr = (pa & (~3U));
       rv_u32 next_addr = addr + 4;
       pa += 4;
-      if ((addr ^ next_addr) & ~0xFFFU)
+      if ((addr ^ next_addr) & ~0xFFFU) /* instruction straddling page bound */
         if ((err = rv_vmm(cpu, cpu->pc + 2, &pa, RV_AX))) {
           cpu->pc += 2; /* correctly report pc for exceptions */
           return err;
         }
-      if ((err = rv_lw(cpu, pa, &i2))) {
+      if ((err = rv_lw(cpu, pa & ~3U, &i2))) {
         cpu->pc += 2; /* correctly report pc for exceptions */
         return err;
       }
