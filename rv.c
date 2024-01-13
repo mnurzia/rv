@@ -1,5 +1,6 @@
 #include "rv.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #define RV_RESET_VEC 0x80000000 /* CPU reset vector */
@@ -462,10 +463,14 @@ rv_u32 rv_if(rv *cpu, rv_u32 *i) {
       rv_u32 next_addr = addr + 4;
       pa += 4;
       if ((addr ^ next_addr) & ~0xFFFU)
-        if ((err = rv_vmm_sv32(cpu, cpu->pc + 2, &pa, RV_AX)))
+        if ((err = rv_vmm_sv32(cpu, cpu->pc + 2, &pa, RV_AX))) {
+          cpu->pc += 2; /* correctly report pc for exceptions */
           return err;
-      if ((err = rv_lw(cpu, pa, &i2)))
+        }
+      if ((err = rv_lw(cpu, pa, &i2))) {
+        cpu->pc += 2; /* correctly report pc for exceptions */
         return err;
+      }
       *i |= (i2 << 16);
     }
   }
@@ -801,12 +806,12 @@ rv_u32 rv_step(rv *cpu) {         /* single step */
 }
 
 rv_u32 rv_irq(rv *cpu, rv_cause cause) {
-  cpu->csrs.mip &= ~(1U << 3 | 1 << 7 | 1 << 11);
+  cpu->csrs.mip &= ~(1U << 3 | 1 << 7 | 1 << 9);
   if (cause & RV_CSW)
     cpu->csrs.mip |= (1 << 3);
   else if (cause & RV_CTIM)
     cpu->csrs.mip |= (1 << 7);
   else if (cause & RV_CEXT)
-    cpu->csrs.mip |= (1 << 11);
+    cpu->csrs.mip |= (1 << 9);
   return 0;
 }

@@ -42,6 +42,17 @@ typedef struct machine {
   rv_uart uart, uart2;
 } machine;
 
+void stl(rv *cpu) {
+  printf("%lu pc %08X a0 %08X a1 %08X a2 %08X a3 %08X a4 %08X a7 %08X s0 %08X "
+         "s1 %08X "
+         "s2 %08X "
+         "ra %08X "
+         "sp %08X r %08X p%i\n",
+         ninstr, cpu->pc, cpu->r[10], cpu->r[11], cpu->r[12], cpu->r[13],
+         cpu->r[14], cpu->r[17], cpu->r[8], cpu->r[9], cpu->r[18], cpu->r[1],
+         cpu->r[2], gres, cpu->priv);
+}
+
 rv_res mach_bus(void *user, rv_u32 addr, rv_u32 *data, rv_u32 store) {
   machine *mach = (machine *)user;
   if (addr >= MACHINE_RAM_BASE && addr < MACHINE_RAM_BASE + MACHINE_RAM_SIZE) {
@@ -148,10 +159,10 @@ int open_sock(void) {
 
 rv_res uart_io(void *user, rv_u8 *byte, rv_u32 w) {
   (void)(user);
+  static int throttle = 0;
   if (w) {
     write(STDOUT_FILENO, byte, 1);
   } else {
-    static int ctr = 0;
     int rv;
     struct pollfd fd;
     rv_u8 b;
@@ -159,9 +170,9 @@ rv_res uart_io(void *user, rv_u8 *byte, rv_u32 w) {
     memset(&fd, 0, sizeof(fd));
     fd.events = POLLIN;
     fd.fd = STDIN_FILENO;
-    if ((ctr = (ctr + 1) % 1000))
+    if (throttle++ & 0xFF)
       return RV_BAD;
-    rv = poll(&fd, 1l, 0);
+    rv = poll(&fd, 1, 0);
     if (!rv || rv < 0 || !(fd.revents & POLLIN)) {
       return RV_BAD;
     }
@@ -175,7 +186,7 @@ rv_res uart_io(void *user, rv_u8 *byte, rv_u32 w) {
 
 rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 w) {
   machine *m = user;
-  static int ctr, actr = 0;
+  static int throttle = 0;
   if (w) {
     write(m->gdb_socket, byte, 1);
   } else {
@@ -186,32 +197,17 @@ rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 w) {
     memset(&fd, 0, sizeof(fd));
     fd.events = POLLIN;
     fd.fd = m->gdb_socket;
-    if ((ctr = (ctr + 1) % 1000))
+    if (throttle++ & 0xFF)
       return RV_BAD;
     rv = poll(&fd, 1, 0);
     if (!rv || rv < 0 || !(fd.revents & POLLIN))
       return RV_BAD;
-    if (actr < 100) {
-      *byte = 0;
-      actr++;
-    } else {
-      rvs = read(m->gdb_socket, &b, 1);
-      if (rvs != 1)
-        return RV_BAD;
-      *byte = b;
-    }
+    rvs = read(m->gdb_socket, &b, 1);
+    if (rvs != 1)
+      return RV_BAD;
+    *byte = b;
   }
   return RV_OK;
-}
-
-void stl(rv *cpu) {
-  printf("%lu pc %08X a0 %08X a1 %08X a2 %08x a3 %08X a7 %08X s0 %08X s1 %08X "
-         "s2 %08X "
-         "ra %08X "
-         "sp %08X r %08X p%i\n",
-         ninstr, cpu->pc, cpu->r[10], cpu->r[11], cpu->r[12], cpu->r[13],
-         cpu->r[17], cpu->r[8], cpu->r[9], cpu->r[18], cpu->r[1], cpu->r[2],
-         gres, cpu->priv);
 }
 
 int main(int argc, const char *const *argv) {
@@ -266,19 +262,27 @@ int main(int argc, const char *const *argv) {
   cpu.r[11] /* a1 */ = dtb_addr; /* dtb ptr */
   {
     do {
-      rv_u32 irq = 0;
-      if (!(period = (period + 1) & 0x3FF))
+      rv_u32 irq = 0, pprv = cpu.priv;
+      if (!((period = (period + 1)) & 0xFFF))
         if (!++cpu.csrs.mtime)
           cpu.csrs.mtimeh++;
-      /*if (ninstr >= 150156685 - 50 && ninstr <= 150156685 + 2000)*/
-      /*if (cpu.pc >= 0xc008333a && cpu.pc <= 0xc00839a2 &&
-          ninstr >= 150156685 - 50 && ninstr <= 150156685 + 10000)*/
+      /*if (gres == RV_EBP)*/
+      /*if (ninstr >= 95756672 - 1000 && ninstr <= 95756672 + 100)*/
+      /*if (cpu.pc == 0xc0035f18 || cpu.pc == 0xc0033b8c ||)*/
+      /*if (cpu.pc == 0xc017bf26)
+        stl(&cpu);*/
+      /*if (ninstr == 143123149 || ninstr == 143129096)
+        stl(&cpu);*/
       gres = rv_step(&cpu);
+      /*if (gres == RV_EUECALL || (cpu.priv != pprv && pprv == RV_PUSER))
+        stl(&cpu);*/
+      if (rv_uart_update(&mach.uart))
+        rv_plic_irq(&mach.plic, 1);
+      if (rv_uart_update(&mach.uart2))
+        rv_plic_irq(&mach.plic, 2);
       irq = RV_CSW * rv_clint_msi(&mach.clint, 0) |
             RV_CTIM * rv_clint_mti(&mach.clint, 0) |
-            RV_CEXT * rv_plic_irq(&mach.plic, 0);
-      rv_uart_update(&mach.uart);
-      rv_uart_update(&mach.uart2);
+            RV_CEXT * rv_plic_mei(&mach.plic, 0);
       rv_irq(&cpu, irq);
     } while ((instr_limit == 0 || ++ninstr < instr_limit));
     stl(&cpu);

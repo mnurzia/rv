@@ -1,5 +1,6 @@
 #include "rv_plic.h"
 
+#include <stdio.h>
 #include <string.h>
 
 void rv_plic_init(rv_plic *plic) { memset(plic, 0, sizeof(*plic)); }
@@ -24,26 +25,13 @@ rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u32 *data, rv_u32 store) {
            (addr & 0xFFF) == 4) /*R Interrupt Claim Register */ {
     rv_u32 context = (addr >> 12) - 0x200, en_off = context * RV_PLIC_NSRC / 32;
     reg = plic->claim + context;
-    if (!store) {
-      rv_u32 maxprio = 0, source = 0, prio, i, j;
-      /* determine highest priority claim bit */
-      for (i = 0; i < RV_PLIC_NSRC; i++) {
-        if (!(plic->enable[en_off + i] & plic->pending[i]))
-          continue;
-        for (j = 0; j < 32; j++) {
-          if (!((plic->enable[en_off + i] >> j | plic->pending[i] >> j) & 1))
-            continue;
-          if ((prio = plic->priority[i * 32 + j]) > plic->thresh[context])
-            maxprio = prio > maxprio ? prio : maxprio, source = i * 32 + j;
-        }
-      }
-      plic->pending[source / 32] &= ~(1U << source % 32); /* clear IP bit */
-      plic->claiming[source / 32 + en_off] |=
-          1 << source % 32; /* set claiming bit */
-      *data = source;
-    } else if (*reg < RV_PLIC_NSRC) {
-      plic->claiming[*reg / 32 + en_off] &=
-          ~(1 << *reg % 32); /* unset claiming bit */
+    if (!store && *reg < RV_PLIC_NSRC) {
+      if (plic->pending[*reg / 32] & (1U << *reg % 32))
+        plic->claiming[*reg / 32 + en_off] |=
+            1U << *reg % 32; /* set claiming bit */
+    } else if (store && *data < RV_PLIC_NSRC) {
+      plic->claiming[*data / 32 + en_off] &=
+          ~(1U << *data % 32); /* unset claiming bit */
     }
   }
   if (reg) {
@@ -56,26 +44,30 @@ rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u32 *data, rv_u32 store) {
 }
 
 rv_res rv_plic_irq(rv_plic *plic, rv_u32 source) {
-  if (source > RV_PLIC_NSRC)
+  if (source > RV_PLIC_NSRC || !source ||
+      ((plic->claiming[source / 32] >> (source % 32)) & 1U) ||
+      ((plic->pending[source / 32] >> (source % 32)) & 1U))
     return RV_BAD;
   plic->pending[source / 32] |= 1U << source % 32;
   return RV_OK;
 }
 
 rv_u32 rv_plic_mei(rv_plic *plic, rv_u32 context) {
-  rv_u32 i, j, o = 0;
-  for (i = 0; i < RV_PLIC_NSRC; i++) {
+  rv_u32 i, j, o = 0, h = 0;
+  for (i = 0; i < RV_PLIC_NSRC / 32; i++) {
     rv_u32 en_off = i + context * RV_PLIC_NSRC / 32;
-    if (!(plic->enable[en_off] & plic->pending[i]))
+    if (!((plic->enable[en_off] & plic->pending[i]) | plic->claiming[i]))
       continue;
     for (j = 0; j < 32; j++) {
-      if (!((plic->enable[en_off] >> j | plic->pending[i] >> j) & 1))
-        continue;
-      else if ((plic->claiming[en_off] >> j) & 1)
-        plic->pending[en_off] &= ~(1 << j);
-      else if (plic->priority[i * 32 + j] > plic->thresh[context])
-        o = 1;
+      if ((plic->claiming[en_off] >> j) & 1U)
+        plic->pending[i] &= ~(1U << j);
+      else if (((plic->enable[i] >> j) & 1U) &&
+               ((plic->pending[i] >> j) & 1U) &&
+               plic->priority[i * 32 + j] >= h &&
+               plic->priority[i * 32 + j] >= plic->thresh[context])
+        o = i * 32 + j, h = plic->priority[i * 32 + j];
     }
   }
-  return o;
+  plic->claim[context] = o;
+  return !!o;
 }

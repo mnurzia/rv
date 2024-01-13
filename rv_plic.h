@@ -12,7 +12,7 @@ typedef struct rv_plic {
   rv_u32 enable[RV_PLIC_NSRC / 32 * RV_PLIC_NCTX];
   rv_u32 thresh[RV_PLIC_NCTX];
   rv_u32 claim[RV_PLIC_NCTX];
-  rv_u32 claiming[RV_PLIC_NSRC / 32 * RV_PLIC_NCTX];
+  rv_u32 claiming[RV_PLIC_NSRC / 32];
 } rv_plic;
 
 void rv_plic_init(rv_plic *plic);

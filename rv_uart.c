@@ -1,54 +1,96 @@
 #include "rv_uart.h"
 
-#define LSR_DR (1U << 0)  /* receiver data ready */
-#define LSR_THE (1U << 5) /* transmitter hold empty */
-#define LSR_TSE (1U << 6) /* transmitter shift empty */
+#include <string.h>
 
-#define IER_EDA (1U << 0)
-#define IER_TRE (1U << 1)
-#define IER_RSI (1U << 2)
-#define IER_MSI (1U << 3)
+void rv_uart_fifo_init(rv_uart_fifo *fifo) { memset(fifo, 0, sizeof(*fifo)); }
 
-#define IIR_IIP (1U << 0)
+void rv_uart_fifo_put(rv_uart_fifo *fifo, rv_u8 byte) {
+  if (fifo->size == RV_UART_FIFO_SIZE)
+    return;
+  fifo->buf[fifo->write] = byte;
+  fifo->write = (fifo->write + 1) & (RV_UART_FIFO_SIZE - 1);
+  fifo->size++;
+}
+
+rv_u8 rv_uart_fifo_get(rv_uart_fifo *fifo) {
+  rv_u8 ch = fifo->buf[fifo->read];
+  if (!fifo->size)
+    return 0;
+  fifo->read = (fifo->read + 1) & (RV_UART_FIFO_SIZE - 1);
+  fifo->size--;
+  return ch;
+}
 
 void rv_uart_init(rv_uart *uart, void *user, rv_uart_cb cb) {
   memset(uart, 0, sizeof(*uart));
-  uart->cb = cb;
   uart->user = user;
+  uart->cb = cb;
+  uart->div = 3;
+  rv_uart_fifo_init(&uart->tx);
+  rv_uart_fifo_init(&uart->rx);
 }
 
 rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u32 *data, rv_u32 str) {
-  addr >>= 2;
-  if (addr >= 0x100)
-    return RV_BAD;
-  if (addr == 0) {
-    if (!str) { /*R Receiver Buffer Register */
-      *data = uart->rbr;
-      uart->lsr &= ~LSR_DR;
-    } else { /* write */
-      uart->thr = *data;
-      uart->lsr &= ~(LSR_THE | LSR_TSE);
-    }
-  } else if (addr == 1) { /*R Interrupt Enable Register */
+  if (addr == 0x00) { /*R txdata */
+    if (!str)
+      *data = (rv_u32)(uart->tx.size == RV_UART_FIFO_SIZE) << 31U;
+    else
+      rv_uart_fifo_put(&uart->tx, (rv_u8)*data);
+  } else if (addr == 0x04) { /*R rxdata */
+    if (!str)
+      *data = ((rv_u32)(!uart->rx.size) << 31U) | rv_uart_fifo_get(&uart->rx);
+  } else if (addr == 0x08) { /*R txctrl */
+    if (!str)
+      *data = uart->txctrl;
+    else
+      uart->txctrl = *data & 0x00070003; /* no nstop supported */
+  } else if (addr == 0x0C) {             /*R rxctrl */
+    if (!str)
+      *data = uart->rxctrl;
+    else
+      uart->rxctrl = *data & 0x00070001;
+  } else if (addr == 0x10) { /*R ie */
+    if (!str)
+      *data = uart->ie;
+    else
+      uart->ie = *data & 3;
+  } else if (addr == 0x14) { /*R ip */
+    if (!str)
+      *data = uart->ip;
+  } else if (addr == 0x18) { /*R div */
+    if (!str)
+      *data = uart->div;
+    else
+      uart->div = *data & 0xFFFF;
+  } else if (addr == 0x1C) { /*R unused */
     if (!str)
       *data = 0;
-  } else if (addr == 5) { /*R Line Status Register */
-    if (!str) {
-      *data = uart->lsr;
-    }
+  } else {
+    return RV_BAD;
   }
   return RV_OK;
 }
 
-void rv_uart_update(rv_uart *uart) {
-  rv_u8 in_byte;
-  if (!(uart->lsr & LSR_THE)) {
-    rv_u8 out = (rv_u8)(uart->thr & 0xFF);
-    uart->cb(uart->user, &out, 1);
-    uart->lsr |= LSR_TSE | LSR_THE;
+rv_u32 rv_uart_update(rv_uart *uart) {
+  rv_u8 byte = uart->tx.buf[uart->tx.read];
+  if (++uart->clk >= uart->div) {
+    if ((uart->txctrl & 1) && uart->tx.size &&
+        (uart->cb(uart->user, &byte, 1) == RV_OK)) {
+      rv_uart_fifo_get(&uart->tx);
+    }
+    if ((uart->rxctrl & 1) && (uart->rx.size < RV_UART_FIFO_SIZE) &&
+        (uart->cb(uart->user, &byte, 0) == RV_OK)) {
+      rv_uart_fifo_put(&uart->rx, byte);
+    }
+    uart->clk = 0;
   }
-  if (!(uart->lsr & LSR_DR) && uart->cb(uart->user, &in_byte, 0) == RV_OK) {
-    uart->lsr |= LSR_DR;
-    uart->rbr = in_byte;
-  }
+  if ((uart->txctrl >> 16) > uart->tx.size && (uart->ie & 1))
+    uart->ip |= 1;
+  else
+    uart->ip &= ~(1U);
+  if ((uart->rxctrl >> 16) < uart->rx.size && (uart->ie & 2))
+    uart->ip |= 2;
+  else
+    uart->ip &= ~(2U);
+  return !!uart->ip;
 }

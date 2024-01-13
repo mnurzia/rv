@@ -14,12 +14,14 @@ rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u32 *data, rv_u32 store) {
     reg = &clint->mswi;
   else if (addr == 0x4000 + 0x7FF8)
     reg = &clint->cpu->csrs.mtime;
-  else if (addr == 0x4000 + 0x7ff8 + 8)
+  else if (addr == 0x4000 + 0x7FF8 + 4)
     reg = &clint->cpu->csrs.mtimeh;
   else if (addr == 0x4000 + 0x0000)
     reg = &clint->mtimecmp;
-  else if (addr == 0x4000 + 0x0000 + 8)
+  else if (addr == 0x4000 + 0x0000 + 4)
     reg = &clint->mtimecmph;
+  else
+    return RV_BAD;
   if (reg) {
     if (store) {
       /*printf("CLINT store: %08X %08X\n", addr, *data);*/
