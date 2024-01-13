@@ -52,12 +52,13 @@ typedef RV_U16_TYPE rv_u16;
 typedef RV_S32_TYPE rv_s32;
 typedef RV_U32_TYPE rv_u32;
 
-/* Result type: one of {RV_OK, RV_BAD} */
+/* Result type: one of {RV_OK, RV_BAD, RV_PAGEFAULT, RV_BAD_ALIGN} */
 typedef rv_u32 rv_res;
 
 #define RV_OK 0
 #define RV_BAD 1
 #define RV_PAGEFAULT 2
+#define RV_BAD_ALIGN 3
 
 typedef struct rv_csrs {
   rv_u32 mhartid, mstatus, mstatush, mscratch, mepc, mcause, mtval, mip, mtvec,

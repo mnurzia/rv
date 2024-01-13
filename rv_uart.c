@@ -30,7 +30,11 @@ void rv_uart_init(rv_uart *uart, void *user, rv_uart_cb cb) {
   rv_uart_fifo_init(&uart->rx);
 }
 
-rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u32 *data, rv_u32 str) {
+rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u8 *d, rv_u32 str,
+                   rv_u32 size) {
+  rv_u32 *data = (rv_u32 *)d;
+  if (size != 4)
+    return RV_BAD_ALIGN;
   if (addr == 0x00) { /*R txdata */
     if (!str)
       *data = (rv_u32)(uart->tx.size == RV_UART_FIFO_SIZE) << 31U;
