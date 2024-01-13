@@ -1,6 +1,5 @@
 #include "rv_clint.h"
 
-#include <stdio.h>
 #include <string.h>
 
 void rv_clint_init(rv_clint *clint, rv *cpu) {
@@ -24,7 +23,6 @@ rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u32 *data, rv_u32 store) {
     return RV_BAD;
   if (reg) {
     if (store) {
-      /*printf("CLINT store: %08X %08X\n", addr, *data);*/
       *reg = *data;
     } else
       *data = *reg;
@@ -33,7 +31,7 @@ rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u32 *data, rv_u32 store) {
 }
 
 rv_u32 rv_clint_msi(rv_clint *clint, rv_u32 context) {
-  (void)context;
+  (void)context; /* unused for now, perhaps add multicore support later */
   return clint->mswi & 1;
 }
 

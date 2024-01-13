@@ -9,22 +9,23 @@
 #define RVA 1 /* Atomics */
 #define RVC 1 /* Compressed Instructions */
 #define RVM 1 /* Multiplication and Division */
+#define RVS 1 /* Supervisor */
 
 /* Exception list. */
-#define RV_EIALIGN 1  /* Instruction alignment exception. */
-#define RV_EIFAULT 2  /* Instruction fault exception. */
-#define RV_EILL 3     /* Illegal instruction exception. */
-#define RV_EBP 4      /* Breakpoint. */
-#define RV_ELALIGN 5  /* Load alignment exception. */
-#define RV_ELFAULT 6  /* Load fault. */
-#define RV_ESALIGN 7  /* Store alignment exception. */
-#define RV_ESFAULT 8  /* Store fault. */
-#define RV_EUECALL 9  /* Environment call from U-mode. */
-#define RV_ESECALL 10 /* Environment call from S-mode. */
-#define RV_EMECALL 12 /* Environment call from M-mode. */
-#define RV_EIPAGE 13  /* Instruction page fault. */
-#define RV_ELPAGE 14  /* Load page fault. */
-#define RV_ESPAGE 16  /* Store page fault. */
+#define RV_EIALIGN 0  /* Instruction alignment exception. */
+#define RV_EIFAULT 1  /* Instruction fault exception. */
+#define RV_EILL 2     /* Illegal instruction exception. */
+#define RV_EBP 3      /* Breakpoint. */
+#define RV_ELALIGN 4  /* Load alignment exception. */
+#define RV_ELFAULT 5  /* Load fault. */
+#define RV_ESALIGN 6  /* Store alignment exception. */
+#define RV_ESFAULT 7  /* Store fault. */
+#define RV_EUECALL 8  /* Environment call from U-mode. */
+#define RV_ESECALL 9  /* Environment call from S-mode. */
+#define RV_EMECALL 11 /* Environment call from M-mode. */
+#define RV_EIPAGE 12  /* Instruction page fault. */
+#define RV_ELPAGE 13  /* Load page fault. */
+#define RV_ESPAGE 15  /* Store page fault. */
 
 #if __STDC__ && __STDC_VERSION__ >= 199901L /* Attempt to load stdint.h. */
 #include <stdint.h>
@@ -69,7 +70,7 @@ typedef struct rv_csrs {
 /* Memory access callback: data is input/output, return RV_BAD on fault */
 typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u32 *data, rv_u32 str);
 
-typedef enum rv_priv { RV_PUSER = 0, RV_PSUPER = 1, RV_PMACHINE = 3 } rv_priv;
+typedef enum rv_priv { RV_PUSER = 0, RV_PSUPER = 1, RV_PMACH = 3 } rv_priv;
 typedef enum rv_access { RV_AR = 1, RV_AW = 2, RV_AX = 4 } rv_access;
 typedef enum rv_cause { RV_CSW = 1, RV_CTIM = 2, RV_CEXT = 4 } rv_cause;
 
