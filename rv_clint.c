@@ -7,8 +7,11 @@ void rv_clint_init(rv_clint *clint, rv *cpu) {
   clint->cpu = cpu;
 }
 
-rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u32 *data, rv_u32 store) {
-  rv_u32 *reg = NULL;
+rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u8 *d, rv_u32 store,
+                    rv_u32 size) {
+  rv_u32 *reg = NULL, *data = (rv_u32 *)d;
+  if (size != 4)
+    return RV_BAD;
   if (addr == 0x0)
     reg = &clint->mswi;
   else if (addr == 0x4000 + 0x7FF8)
