@@ -57,7 +57,7 @@ rv_res mach_bus(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
                 rv_u32 width) {
   mach *m = (mach *)user;
   if (addr >= MACH_RAM_BASE && addr < MACH_RAM_BASE + MACH_RAM_SIZE) {
-    rv_u8 *ram = (rv_u8 *)(m->ram) + addr - MACH_RAM_BASE;
+    rv_u8 *ram = m->ram + addr - MACH_RAM_BASE;
     memcpy(store ? ram : data, store ? data : ram, width);
     return RV_OK;
   } else if (addr >= MACH_PLIC_BASE && addr < MACH_PLIC_BASE + MACH_PLIC_SIZE) {
@@ -242,8 +242,7 @@ int main(int argc, const char *const *argv) {
     assert(sz > 0);
     fseek(f, 0L, SEEK_SET);
     dtb_addr = MACH_RAM_BASE + 0x2200000; /* DTB should be aligned */
-    fread(mach.ram + ((dtb_addr - MACH_RAM_BASE) >> 2), 1, (unsigned long)sz,
-          f);
+    fread(mach.ram + (dtb_addr - MACH_RAM_BASE), 1, (unsigned long)sz, f);
     fclose(f);
     printf("Loaded %li byte DTB.\n", (unsigned long)sz);
   }
@@ -270,8 +269,6 @@ int main(int argc, const char *const *argv) {
       /*if (ninstr == 143123149 || ninstr == 143129096)
         stl(&cpu);*/
       gres = rv_step(&cpu);
-      /*if (gres == RV_EUECALL || (cpu.priv != pprv && pprv == RV_PUSER))
-        stl(&cpu);*/
       if (rv_uart_update(&mach.uart))
         rv_plic_irq(&mach.plic, 1);
       if (rv_uart_update(&mach.uart2))
