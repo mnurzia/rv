@@ -16,31 +16,31 @@
 unsigned long ninstr = 0;
 rv_u32 gres = 0;
 
-#define MACHINE_RAM_BASE 0x80000000UL
-#define MACHINE_RAM_SIZE (1024UL * 1024UL * 128UL) /* 128MiB */
+#define MACH_RAM_BASE 0x80000000UL
+#define MACH_RAM_SIZE (1024UL * 1024UL * 128UL) /* 128MiB */
 
-#define MACHINE_PLIC_BASE 0xC000000UL
-#define MACHINE_PLIC_SIZE 0x400000UL
+#define MACH_PLIC_BASE 0xC000000UL
+#define MACH_PLIC_SIZE 0x400000UL
 
-#define MACHINE_CLINT_BASE 0x2000000UL
-#define MACHINE_CLINT_SIZE 0x10000UL
+#define MACH_CLINT_BASE 0x2000000UL
+#define MACH_CLINT_SIZE 0x10000UL
 
-#define MACHINE_UART_BASE 0x3000000UL
-#define MACHINE_UART_SIZE 0x100UL * 4
+#define MACH_UART_BASE 0x3000000UL
+#define MACH_UART_SIZE 0x100UL * 4
 
-#define MACHINE_UART2_BASE 0x6000000UL
-#define MACHINE_UART2_SIZE 0x100UL * 4
+#define MACH_UART2_BASE 0x6000000UL
+#define MACH_UART2_SIZE 0x100UL * 4
 
-typedef struct machine {
+typedef struct mach {
   rv *cpu;
-  rv_u32 *ram;
+  rv_u8 *ram;
   rv_u8 recv_buf;
   int has_recv;
   int gdb_socket;
   rv_plic plic;
   rv_clint clint;
   rv_uart uart, uart2;
-} machine;
+} mach;
 
 void stl(rv *cpu) {
   printf("%lu pc %08X a0 %08X a1 %08X a2 %08X a3 %08X a4 %08X a7 %08X s0 %08X "
@@ -53,27 +53,23 @@ void stl(rv *cpu) {
          cpu->r[2], gres, cpu->priv);
 }
 
-rv_res mach_bus(void *user, rv_u32 addr, rv_u32 *data, rv_u32 store) {
-  machine *mach = (machine *)user;
-  if (addr >= MACHINE_RAM_BASE && addr < MACHINE_RAM_BASE + MACHINE_RAM_SIZE) {
-    rv_u32 *ram = mach->ram + ((addr - MACHINE_RAM_BASE) >> 2);
-    if (store)
-      *ram = *data;
-    else
-      *data = *ram;
+rv_res mach_bus(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
+                rv_u32 width) {
+  mach *m = (mach *)user;
+  if (addr >= MACH_RAM_BASE && addr < MACH_RAM_BASE + MACH_RAM_SIZE) {
+    rv_u8 *ram = (rv_u8 *)(m->ram) + addr - MACH_RAM_BASE;
+    memcpy(store ? ram : data, store ? data : ram, width);
     return RV_OK;
-  } else if (addr >= MACHINE_PLIC_BASE &&
-             addr < MACHINE_PLIC_BASE + MACHINE_PLIC_SIZE) {
-    return rv_plic_bus(&mach->plic, addr - MACHINE_PLIC_BASE, data, store);
-  } else if (addr >= MACHINE_CLINT_BASE &&
-             addr < MACHINE_CLINT_BASE + MACHINE_CLINT_SIZE) {
-    return rv_clint_bus(&mach->clint, addr - MACHINE_CLINT_BASE, data, store);
-  } else if (addr >= MACHINE_UART_BASE &&
-             addr < MACHINE_UART_BASE + MACHINE_UART_SIZE) {
-    return rv_uart_bus(&mach->uart, addr - MACHINE_UART_BASE, data, store);
-  } else if (addr >= MACHINE_UART2_BASE &&
-             addr < MACHINE_UART2_BASE + MACHINE_UART2_SIZE) {
-    return rv_uart_bus(&mach->uart2, addr - MACHINE_UART2_BASE, data, store);
+  } else if (addr >= MACH_PLIC_BASE && addr < MACH_PLIC_BASE + MACH_PLIC_SIZE) {
+    return rv_plic_bus(&m->plic, addr - MACH_PLIC_BASE, data, store, width);
+  } else if (addr >= MACH_CLINT_BASE &&
+             addr < MACH_CLINT_BASE + MACH_CLINT_SIZE) {
+    return rv_clint_bus(&m->clint, addr - MACH_CLINT_BASE, data, store, width);
+  } else if (addr >= MACH_UART_BASE && addr < MACH_UART_BASE + MACH_UART_SIZE) {
+    return rv_uart_bus(&m->uart, addr - MACH_UART_BASE, data, store, width);
+  } else if (addr >= MACH_UART2_BASE &&
+             addr < MACH_UART2_BASE + MACH_UART2_SIZE) {
+    return rv_uart_bus(&m->uart2, addr - MACH_UART2_BASE, data, store, width);
   } else {
     return RV_BAD;
   }
@@ -92,7 +88,7 @@ void dump_pt(rv *cpu, rv_u32 base) {
   printf("Page table dump @ %08X:\n", pt_addr);
   for (i = 0; i < (1 << 10); i++) {
     rv_u32 pte, pte_addr = pt_addr + (i << 2);
-    rv_res res = cpu->bus_cb(cpu->user, pte_addr, &pte, 0);
+    rv_res res = cpu->bus_cb(cpu->user, pte_addr, (rv_u8 *)&pte, 0, 4);
     rv_u32 phys_lo, phys_hi;
     if (res) {
       printf("%08X: fault\n", pte_addr);
@@ -109,7 +105,7 @@ void dump_pt(rv *cpu, rv_u32 base) {
     for (j = 0; j < (1 << 10); j++) {
       rv_u32 pte2_addr = pt2_addr + (j << 2), pte2;
       rv_u32 phys_lo_2, phys_hi_2;
-      res = cpu->bus_cb(cpu->user, pte2_addr, &pte2, 0);
+      res = cpu->bus_cb(cpu->user, pte2_addr, (rv_u8 *)&pte2, 0, 4);
       if (res) {
         printf("  %08X: fault\n", pte2_addr);
         continue;
@@ -185,7 +181,7 @@ rv_res uart_io(void *user, rv_u8 *byte, rv_u32 w) {
 }
 
 rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 w) {
-  machine *m = user;
+  mach *m = user;
   static int throttle = 0;
   if (w) {
     write(m->gdb_socket, byte, 1);
@@ -212,7 +208,7 @@ rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 w) {
 
 int main(int argc, const char *const *argv) {
   rv cpu;
-  machine mach;
+  mach mach;
   rv_u32 dtb_addr;
   rv_u32 period = 0;
   unsigned long instr_limit = 0;
@@ -223,10 +219,10 @@ int main(int argc, const char *const *argv) {
   mach.has_recv = 0;
   (void)argc;
   (void)argv;
-  mach.ram = malloc(MACHINE_RAM_SIZE);
+  mach.ram = malloc(MACH_RAM_SIZE);
   mach.cpu = &cpu;
   mach.gdb_socket = open_sock();
-  memset(mach.ram, 0, MACHINE_RAM_SIZE);
+  memset(mach.ram, 0, MACH_RAM_SIZE);
   {
     long sz;
     FILE *f = fopen(argv[1], "rb");
@@ -245,8 +241,8 @@ int main(int argc, const char *const *argv) {
     sz = ftell(f);
     assert(sz > 0);
     fseek(f, 0L, SEEK_SET);
-    dtb_addr = MACHINE_RAM_BASE + 0x2200000; /* DTB should be aligned */
-    fread(mach.ram + ((dtb_addr - MACHINE_RAM_BASE) >> 2), 1, (unsigned long)sz,
+    dtb_addr = MACH_RAM_BASE + 0x2200000; /* DTB should be aligned */
+    fread(mach.ram + ((dtb_addr - MACH_RAM_BASE) >> 2), 1, (unsigned long)sz,
           f);
     fclose(f);
     printf("Loaded %li byte DTB.\n", (unsigned long)sz);
@@ -256,7 +252,7 @@ int main(int argc, const char *const *argv) {
   rv_clint_init(&mach.clint, &cpu);
   rv_uart_init(&mach.uart, NULL, &uart_io);
   rv_uart_init(&mach.uart2, &mach, &uart2_io);
-  cpu.pc = MACHINE_RAM_BASE;
+  cpu.pc = MACH_RAM_BASE;
   /* https://lwn.net/Articles/935122/ */
   cpu.r[10] /* a0 */ = 0;        /* hartid */
   cpu.r[11] /* a1 */ = dtb_addr; /* dtb ptr */
