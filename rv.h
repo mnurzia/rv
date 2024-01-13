@@ -68,7 +68,8 @@ typedef struct rv_csrs {
 } rv_csrs;
 
 /* Memory access callback: data is input/output, return RV_BAD on fault */
-typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u32 *data, rv_u32 str);
+typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data, rv_u32 str,
+                            rv_u32 width);
 
 typedef enum rv_priv { RV_PUSER = 0, RV_PSUPER = 1, RV_PMACH = 3 } rv_priv;
 typedef enum rv_access { RV_AR = 1, RV_AW = 2, RV_AX = 4 } rv_access;

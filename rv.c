@@ -25,11 +25,11 @@ void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb) {
 }
 
 rv_res rv_lw(rv *cpu, rv_u32 addr, rv_u32 *data) { /* load word */
-  return cpu->bus_cb(cpu->user, addr, data, 0);
+  return cpu->bus_cb(cpu->user, addr, (rv_u8 *)data, 0, 4);
 }
 
 rv_res rv_sw(rv *cpu, rv_u32 addr, rv_u32 data) { /* store word */
-  return cpu->bus_cb(cpu->user, addr, &data, 1);
+  return cpu->bus_cb(cpu->user, addr, (rv_u8 *)&data, 1, 4);
 }
 
 rv_u32 rv_signext(rv_u32 x, rv_u32 h) { /* sign-extend x from h'th bit */
