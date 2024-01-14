@@ -60,13 +60,13 @@ typedef rv_u32 rv_res;
 #define RV_PAGEFAULT 2
 #define RV_BAD_ALIGN 3
 
-typedef struct rv_csrs {
+typedef struct rv_csr {
   rv_u32 /* sstatus, */ sie, stvec, scounteren, sscratch, sepc, scause, stval,
       sip, satp;
   rv_u32 mstatus, misa, medeleg, mideleg, mie, mtvec, mcounteren, mstatush,
       mscratch, mepc, mcause, mtval, mip, mtime, mtimeh, mvendorid, marchid,
       mimpid, mhartid;
-} rv_csrs;
+} rv_csr;
 
 /* Memory access callback: data is input/output, return RV_BAD on fault */
 typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data, rv_u32 str,
@@ -74,7 +74,7 @@ typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data, rv_u32 str,
 
 typedef enum rv_priv { RV_PUSER = 0, RV_PSUPER = 1, RV_PMACH = 3 } rv_priv;
 typedef enum rv_access { RV_AR = 1, RV_AW = 2, RV_AX = 4 } rv_access;
-typedef enum rv_cause { RV_CSW = 1, RV_CTIM = 2, RV_CEXT = 4 } rv_cause;
+typedef enum rv_cause { RV_CSI = 8, RV_CTI = 128, RV_CEI = 512 } rv_cause;
 
 typedef struct rv {
   rv_bus_cb bus_cb;
@@ -82,7 +82,7 @@ typedef struct rv {
   rv_u32 pc;
   rv_u32 next_pc;
   void *user;
-  rv_csrs csrs;
+  rv_csr csr;
   rv_u32 priv;
 #if RVA
   rv_u32 reserve, reserve_valid;
@@ -97,7 +97,7 @@ void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 rv_u32 rv_step(rv *cpu);
 
 /* Trigger interrupt(s). */
-rv_u32 rv_irq(rv *cpu, rv_cause cause);
+void rv_irq(rv *cpu, rv_cause cause);
 
 #endif
 

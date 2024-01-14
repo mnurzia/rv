@@ -82,7 +82,7 @@ rv_res mach_bus(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
 #define rv_tbf(i, h, l, o) (rv_bf(i, h, l) << (o)) /* translate bit field */
 
 void dump_pt(rv *cpu, rv_u32 base) {
-  rv_u32 satp = cpu->csrs.satp;
+  rv_u32 satp = cpu->csr.satp;
   rv_u32 pt_addr = base ? base : rv_tbf(satp, 21, 0, 12), pt2_addr;
   rv_u32 i, j;
   printf("Page table dump @ %08X:\n", pt_addr);
@@ -259,8 +259,8 @@ int main(int argc, const char *const *argv) {
     do {
       rv_u32 irq = 0, pprv = cpu.priv;
       if (!((period = (period + 1)) & 0xFFF))
-        if (!++cpu.csrs.mtime)
-          cpu.csrs.mtimeh++;
+        if (!++cpu.csr.mtime)
+          cpu.csr.mtimeh++;
       /*if (gres == RV_EBP)*/
       /*if (ninstr >= 95756672 - 1000 && ninstr <= 95756672 + 100)*/
       /*if (cpu.pc == 0xc0035f18 || cpu.pc == 0xc0033b8c ||)*/
@@ -273,9 +273,9 @@ int main(int argc, const char *const *argv) {
         rv_plic_irq(&mach.plic, 1);
       if (rv_uart_update(&mach.uart2))
         rv_plic_irq(&mach.plic, 2);
-      irq = RV_CSW * rv_clint_msi(&mach.clint, 0) |
-            RV_CTIM * rv_clint_mti(&mach.clint, 0) |
-            RV_CEXT * rv_plic_mei(&mach.plic, 0);
+      irq = RV_CSI * rv_clint_msi(&mach.clint, 0) |
+            RV_CTI * rv_clint_mti(&mach.clint, 0) |
+            RV_CEI * rv_plic_mei(&mach.plic, 0);
       rv_irq(&cpu, irq);
     } while ((instr_limit == 0 || ++ninstr < instr_limit));
     stl(&cpu);

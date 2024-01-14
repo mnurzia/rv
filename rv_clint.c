@@ -15,9 +15,9 @@ rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u8 *d, rv_u32 store,
   if (addr == 0x0)
     reg = &clint->mswi;
   else if (addr == 0x4000 + 0x7FF8)
-    reg = &clint->cpu->csrs.mtime;
+    reg = &clint->cpu->csr.mtime;
   else if (addr == 0x4000 + 0x7FF8 + 4)
-    reg = &clint->cpu->csrs.mtimeh;
+    reg = &clint->cpu->csr.mtimeh;
   else if (addr == 0x4000 + 0x0000)
     reg = &clint->mtimecmp;
   else if (addr == 0x4000 + 0x0000 + 4)
@@ -40,7 +40,7 @@ rv_u32 rv_clint_msi(rv_clint *clint, rv_u32 context) {
 
 rv_u32 rv_clint_mti(rv_clint *clint, rv_u32 context) {
   (void)context;
-  return (clint->cpu->csrs.mtimeh > clint->mtimecmph) ||
-         ((clint->cpu->csrs.mtimeh == clint->mtimecmph) &&
-          (clint->cpu->csrs.mtime >= clint->mtimecmp));
+  return (clint->cpu->csr.mtimeh > clint->mtimecmph) ||
+         ((clint->cpu->csr.mtimeh == clint->mtimecmph) &&
+          (clint->cpu->csr.mtime >= clint->mtimecmp));
 }
