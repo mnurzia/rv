@@ -196,8 +196,10 @@ rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
   } else {
     rv_u32 ppn = rv_bf(cpu->csrs.satp, 21, 0) /* satp.ppn */,
            a = ppn << 12 /* a = satp.ppn * PAGESIZE */,
-           i = 1 /* i = LEVELS - 1 */, pte, pte_addr, pte_access;
-    while (1) {
+           i = 1 /* i = LEVELS - 1 */, pte, pte_addr, pte_access, tlb = 0;
+    if (cpu->tlb_valid && cpu->tlb_va == (va & ~0xFFFU))
+      pte = cpu->tlb_pte, tlb = 1, i = cpu->tlb_i;
+    while (!tlb) {
       pte_addr = a + (rv_bf(va, 21 + 10 * i, 12 + 10 * i)
                       << 2); /* pte_addr = a + va.vpn[i] * PTESIZE */
       if (cpu->bus_cb(cpu->user, pte_addr, (rv_u8 *)&pte, 0, 4))
@@ -211,6 +213,9 @@ rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
       i = i - 1;
       a = rv_tbf(pte, 31, 10, 12); /* a = pte.ppn[*] * PAGESIZE */
     }
+    if (!tlb)
+      cpu->tlb_valid = 1, cpu->tlb_va = va & ~0xFFFU, cpu->tlb_pte = pte,
+      cpu->tlb_i = i;
     if (!rv_b(pte, 4) && epriv == RV_PUSER)
       return RV_PAGEFAULT; /* u-bit not set */
     if (epriv == RV_PSUPER && !rv_b(cpu->csrs.mstatus, 18) && rv_b(pte, 4))
@@ -425,7 +430,7 @@ static rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
 static rv_u32 rv_if(rv *cpu, rv_u32 *i) {
   rv_u32 err, bound = (cpu->pc ^ (cpu->pc + 3)) & ~0xFFFU, pc = cpu->pc & ~3U;
   if (cpu->pc & 2 || bound) { /* perform if in <=2 2-byte fetches */
-    rv_u32 ia, ib = 0;
+    rv_u32 ia = 0, ib = 0;
     pc = cpu->pc;
     if ((err = rv_bus(cpu, &pc, (rv_u8 *)&ia, 2, RV_AX)))
       return err;
@@ -670,6 +675,7 @@ rv_u32 rv_step(rv *cpu) {
           } else if (rv_irs2(i) == 5 && rv_if7(i) == 8) { /*I wfi */
             rv_dbg("(WFI)\n");
           } else if (rv_if7(i) == 9) { /*I sfence.vma */
+            cpu->tlb_valid = 0;
           } else if (!rv_irs1(i) && !rv_irs2(i) && !rv_if7(i)) { /*I ecall */
             return rv_except(cpu, RV_EUECALL + cpu->priv, cpu->pc);
           } else if (!rv_irs1(i) && rv_irs2(i) == 1 && !rv_if7(i)) {

@@ -87,6 +87,7 @@ typedef struct rv {
 #if RVA
   rv_u32 reserve, reserve_valid;
 #endif
+  rv_u32 tlb_va, tlb_pte, tlb_valid, tlb_i;
 } rv;
 
 /* Initialize CPU. You can call this again on `cpu` to reset it. */
@@ -95,7 +96,7 @@ void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 /* Single-step CPU. */
 rv_u32 rv_step(rv *cpu);
 
-/* Trigger an interrupt. */
+/* Trigger interrupt(s). */
 rv_u32 rv_irq(rv *cpu, rv_cause cause);
 
 #endif
