@@ -9,17 +9,15 @@ void die(const char *msg) {
   exit(1);
 }
 
-rv_u32 mem[0x10000 / 4];
+rv_u8 mem[0x10000];
 
-rv_res bus_cb(void *user, rv_u32 addr, rv_u32 *data, rv_u32 store) {
-  rv_u32 *ptr = mem + ((addr - 0x80000000) >> 2);
+rv_res bus_cb(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
+              rv_u32 width) {
+  rv_u8 *ptr = mem + (addr - 0x80000000);
   (void)(user);
-  if (addr < 0x80000000 || addr >= 0x80000000 + sizeof(mem))
+  if (addr < 0x80000000 || (addr + width) >= 0x80000000 + sizeof(mem))
     return RV_BAD;
-  if (store)
-    *ptr = *data;
-  else
-    *data = *ptr;
+  memcpy(store ? ptr : data, store ? data : ptr, width);
   return 0;
 }
 
