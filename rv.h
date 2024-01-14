@@ -61,11 +61,11 @@ typedef rv_u32 rv_res;
 #define RV_BAD_ALIGN 3
 
 typedef struct rv_csrs {
-  rv_u32 mhartid, mstatus, mstatush, mscratch, mepc, mcause, mtval, mip, mtvec,
-      mie, misa, mvendorid, marchid, mimpid, medeleg, mideleg, mcounteren,
-      mtime, mtimeh;
-  rv_u32 /* sstatus, */ sie, stvec, scounteren, senvcfg, sscratch, sepc, scause,
-      stval, sip, satp, scontext;
+  rv_u32 /* sstatus, */ sie, stvec, scounteren, sscratch, sepc, scause, stval,
+      sip, satp;
+  rv_u32 mstatus, misa, medeleg, mideleg, mie, mtvec, mcounteren, mstatush,
+      mscratch, mepc, mcause, mtval, mip, mtime, mtimeh, mvendorid, marchid,
+      mimpid, mhartid;
 } rv_csrs;
 
 /* Memory access callback: data is input/output, return RV_BAD on fault */
@@ -92,7 +92,7 @@ typedef struct rv {
 /* Initialize CPU. You can call this again on `cpu` to reset it. */
 void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 
-/* Single-step CPU. Returns 0 on success, one of RV_E* on exception. */
+/* Single-step CPU. */
 rv_u32 rv_step(rv *cpu);
 
 /* Trigger an interrupt. */

@@ -24,9 +24,8 @@ void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb) {
   cpu->priv = RV_PMACH;
 }
 
-rv_u32 rv_signext(rv_u32 x, rv_u32 h) { /* sign-extend x from h'th bit */
-  return (0 - (x >> h)) << h | x;
-}
+/* sign-extend x from h'th bit */
+static rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
 #define RV_SBIT 0x80000000                  /* sign bit */
 #define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT)) /* extract sign */
@@ -63,17 +62,20 @@ rv_u32 rv_signext(rv_u32 x, rv_u32 h) { /* sign-extend x from h'th bit */
    rv_tb(i, 20, 11) | rv_tbf(i, 30, 21, 1))     /* imm. for J-type */
 #define rv_isz(i) (rv_bf(i, 1, 0) == 3 ? 4 : 2) /* instruction size */
 
-rv_u32 rv_lr(rv *cpu, rv_u8 i) { /* load register */
+/* load register */
+static rv_u32 rv_lr(rv *cpu, rv_u8 i) {
   /* rv_dbg(" (LR) x%02i -> %08X\n", i, cpu->r[i]); */
   return cpu->r[i];
 }
 
-void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) { /* store register */
+/* store register */
+static void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) {
   /* rv_dbg(" (SR) x%02i <- %08X\n", i, v); */
   cpu->r[i] = i ? v : 0;
 }
 
-rv_res rv_csr(rv *cpu, rv_u32 csr, rv_u32 v, int w, rv_u32 *out) { /* csr op */
+/* csr operation */
+static rv_res rv_csr(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 w, rv_u32 *out) {
   rv_u32 *y /* output */, wmask = (rv_u32)-1, rmask = wmask;
   rv_u32 rw = rv_bf(csr, 11, 10), priv = rv_bf(csr, 9, 8);
   if ((w && rw == 3) || cpu->priv < priv)
@@ -110,8 +112,8 @@ rv_res rv_csr(rv *cpu, rv_u32 csr, rv_u32 v, int w, rv_u32 *out) { /* csr op */
     y = &cpu->csrs.mie, wmask = 0xAAA;
   } else if (csr == 0x305) { /*C mtvec */
     y = &cpu->csrs.mtvec;
-  } else if (csr == 0x306) { /*C scounteren */
-    y = &cpu->csrs.scounteren, wmask = 0;
+  } else if (csr == 0x306) { /*C mcounteren */
+    y = &cpu->csrs.mcounteren, wmask = 0;
   } else if (csr == 0x310) { /*C mstatush */
     y = &cpu->csrs.mstatush, wmask = rmask = 0x00000030;
   } else if (csr == 0x340) { /*C mscratch */
@@ -143,17 +145,20 @@ rv_res rv_csr(rv *cpu, rv_u32 csr, rv_u32 v, int w, rv_u32 *out) { /* csr op */
   return RV_OK;
 }
 
-rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 *out) { /* store csr */
+/* store csr */
+static rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 *out) {
   rv_dbg("(SCSR@%X) %04X <- %08X\n", cpu->priv, csr, v);
   return rv_csr(cpu, csr, v, 1 /* write */, out);
 }
 
-rv_res rv_lcsr(rv *cpu, rv_u32 csr, rv_u32 *out) { /* load csr */
+/* load csr */
+static rv_res rv_lcsr(rv *cpu, rv_u32 csr, rv_u32 *out) {
   rv_dbg("(LCSR@%X) %04X\n", cpu->priv, csr);
   return rv_csr(cpu, csr, 0, 0 /* read */, out);
 }
 
-rv_u32 rv_except(rv *cpu, rv_u32 cause, rv_u32 tval) { /* set exception state */
+/* set exception state */
+static rv_u32 rv_except(rv *cpu, rv_u32 cause, rv_u32 tval) {
   rv_u32 is_interrupt = !!(cause & 0x80000000), rcause = cause & ~0x80000000;
   rv_priv xp = /* destination privilege, switch from y = cpu->priv to this */
       (cpu->priv < RV_PMACH) &&
@@ -181,8 +186,8 @@ rv_u32 rv_except(rv *cpu, rv_u32 cause, rv_u32 tval) { /* set exception state */
   return cause;
 }
 
-rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa,
-              rv_access access) { /* sv32 virtual address -> physical address */
+/* sv32 virtual address -> physical address */
+rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
   rv_u32 epriv = rv_b(cpu->csrs.mstatus, 17) && access != RV_AX
                      ? rv_bf(cpu->csrs.mstatus, 12, 11)
                      : cpu->priv; /* effective privilege mode */
@@ -230,19 +235,22 @@ rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa,
 #define rvm_lo(w) ((w) & (rv_u32)0xFFFFU) /* low 16 bits of 32-bit word */
 #define rvm_hi(w) ((w) >> 16)             /* high 16 bits of 32-bit word */
 
-rv_u32 rvm_ahh(rv_u32 a, rv_u32 b, rv_u32 cin, rv_u32 *cout) { /* adc 16 bit */
+/* adc 16 bit */
+static rv_u32 rvm_ahh(rv_u32 a, rv_u32 b, rv_u32 cin, rv_u32 *cout) {
   rv_u32 sum = a + b + cin; /* cin must be less than 2. */
   *cout = rvm_hi(sum);
   return rvm_lo(sum);
 }
 
-rv_u32 rvm_mhh(rv_u32 a, rv_u32 b, rv_u32 *cout) { /* mul 16 bit */
+/* mul 16 bit */
+static rv_u32 rvm_mhh(rv_u32 a, rv_u32 b, rv_u32 *cout) {
   rv_u32 prod = a * b;
   *cout = rvm_hi(prod);
   return rvm_lo(prod);
 }
 
-rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) { /* 32 x 32 -> 64 bit multiply */
+/* 32 x 32 -> 64 bit multiply */
+static rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) {
   rv_u32 al = rvm_lo(a), ah = rvm_hi(a), bl = rvm_lo(b), bh = rvm_hi(b);
   rv_u32 qh, ql = rvm_mhh(al, bl, &qh);    /* qh, ql = al * bl      */
   rv_u32 rh, rl = rvm_mhh(al, bh, &rh);    /* rh, rl = al * bh      */
@@ -279,9 +287,9 @@ rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) { /* 32 x 32 -> 64 bit multiply */
 #define rvc_imm_ci_c(c) /* CI imm. for c.lwsp */                               \
   (rv_tbf(c, 3, 2, 6) | rv_tb(c, 12, 5) | rv_tbf(c, 6, 4, 2))
 #define rvc_imm_cj(c) /* CJ imm. for c.jalr/c.j */                             \
-  (rv_signext(rv_tb(c, 12, 11), 11) | rv_tb(c, 8, 10) | rv_tbf(c, 10, 9, 8) |  \
-   rv_tb(c, 6, 7) | rv_tb(c, 7, 6) | rv_tb(c, 2, 5) | rv_tb(c, 11, 4) |        \
-   rv_tbf(c, 5, 3, 1))
+  (rv_signext(rv_tb(c, 12, 11), 11) | rv_tb(c, 11, 4) | rv_tbf(c, 10, 9, 8) |  \
+   rv_tb(c, 8, 10) | rv_tb(c, 7, 6) | rv_tb(c, 6, 7) | rv_tbf(c, 5, 3, 1) |    \
+   rv_tb(c, 2, 5))
 #define rvc_imm_cb(c) /* CB imm. for c.beqz/c.bnez */                          \
   (rv_signext(rv_tb(c, 12, 8), 8) | rv_tbf(c, 6, 5, 6) | rv_tb(c, 2, 5) |      \
    rv_tbf(c, 11, 10, 3) | rv_tbf(c, 4, 3, 1))
@@ -306,7 +314,8 @@ rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) { /* 32 x 32 -> 64 bit multiply */
   (rv_b(imm, 12) << 31 | rv_bf(imm, 10, 5) << 25 | (rs2) << 20 | (rs1) << 15 | \
    (f3) << 12 | rv_bf(imm, 4, 1) << 8 | rv_b(imm, 11) << 7 | (op) << 2 | 3)
 
-rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
+/* decompress instruction */
+static rv_u32 rvc_inst(rv_u32 c) {
   if (rvc_op(c) == 0) {
     if (rvc_f3(c) == 0 && c != 0) { /* c.addi4spn -> addi rd', x2, nzuimm */
       return rv_i_i(4, 0, rvc_irpl(c), 2, rvc_imm_ciw(c));
@@ -395,8 +404,9 @@ rv_u32 rvc_inst(rv_u32 c) { /* decompress instruction */
 }
 #endif /* RVC */
 
-rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
-              rv_access access) {
+/* perform a bus access. access == RV_AW stores data. */
+static rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
+                     rv_access access) {
   rv_u32 err, pa /* physical address */;
   if ((err = rv_vmm(cpu, *va, &pa, access)))
     return err; /* page or access fault */
@@ -411,10 +421,12 @@ rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
   return cpu->bus_cb(cpu->user, pa, data, access == RV_AW, width);
 }
 
-rv_u32 rv_if(rv *cpu, rv_u32 *i) {
-  rv_u32 err, bound = (cpu->pc ^ (cpu->pc + 3)) & ~0xFFFU;
-  if (bound) {
-    rv_u32 ia, ib = 0, pc = cpu->pc;
+/* instruction fetch */
+static rv_u32 rv_if(rv *cpu, rv_u32 *i) {
+  rv_u32 err, bound = (cpu->pc ^ (cpu->pc + 3)) & ~0xFFFU, pc = cpu->pc & ~3U;
+  if (cpu->pc & 2 || bound) { /* perform if in <=2 2-byte fetches */
+    rv_u32 ia, ib = 0;
+    pc = cpu->pc;
     if ((err = rv_bus(cpu, &pc, (rv_u8 *)&ia, 2, RV_AX)))
       return err;
     if (rv_isz(ia) == 4 && (pc += 2, 1) &&
@@ -423,7 +435,7 @@ rv_u32 rv_if(rv *cpu, rv_u32 *i) {
       return err;
     }
     *i = (rv_u32)ia | (rv_u32)ib << 16U;
-  } else if ((err = rv_bus(cpu, &cpu->pc, (rv_u8 *)i, 4, RV_AX)))
+  } else if ((err = rv_bus(cpu, &pc, (rv_u8 *)i, 4, RV_AX))) /* 4-byte fetch */
     return err;
   cpu->next_pc = cpu->pc + rv_isz(*i);
 #if RVC
@@ -433,7 +445,8 @@ rv_u32 rv_if(rv *cpu, rv_u32 *i) {
   return RV_OK;
 }
 
-rv_u32 rv_step(rv *cpu) {         /* single step */
+/* single step */
+rv_u32 rv_step(rv *cpu) {
   rv_u32 i, err = rv_if(cpu, &i); /* fetch instruction into i */
   if (err)
     rv_dbg("(IF) %08X -> fault\n", cpu->pc);
@@ -612,7 +625,7 @@ rv_u32 rv_step(rv *cpu) {         /* single step */
 #endif
       rv_sr(cpu, rv_ird(i), y);   /* set register to ALU output */
     } else if (rv_ioph(i) == 3) { /*Q 11/100: SYSTEM */
-      rv_u32 csr = rv_iimm_iu(i) /* CSR number */, y; /* result */
+      rv_u32 csr = rv_iimm_iu(i) /* CSR number */, y /* result */;
       rv_u32 s = rv_if3(i) & 4 ? rv_irs1(i) : rv_lr(cpu, rv_irs1(i)); /* uimm */
       if ((rv_if3(i) & 3) == 1) {    /*I csrrw, csrrwi */
         if (rv_irs1(i)) {            /* perform CSR load */
