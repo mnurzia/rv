@@ -2,7 +2,7 @@
 #ifndef MN_RV_H
 #define MN_RV_H
 
-#define RV_VERSION "2.0.0"
+#define RV_VERSION "1.0.0"
 
 /* Set to 1 for extremely fine-grained debug output. */
 /*#define RV_VERBOSE 0*/
