@@ -80,16 +80,18 @@ To dump a binary starting at `0x80000000` that can be directly loaded by `rv` as
 
 Click an instruction to see its implementation in `rv.c`.
 
-- [`add       `](rv.c#L419)[`addi      `](rv.c#L419)[`and       `](rv.c#L433)[`andi      `](rv.c#L433)[`auipc     `](rv.c#L505)[`beq       `](rv.c#L375)[`bge       `](rv.c#L378)[`bgtu      `](rv.c#L380)
-- [`blt       `](rv.c#L377)[`bltu      `](rv.c#L379)[`bne       `](rv.c#L376)[`c.add     `](rv.c#L296)[`c.addi    `](rv.c#L237)[`c.addi16sp`](rv.c#L244)[`c.and     `](rv.c#L265)[`c.andi    `](rv.c#L256)
-- [`c.beqz    `](rv.c#L275)[`c.bnez    `](rv.c#L277)[`c.j       `](rv.c#L273)[`c.jal     `](rv.c#L239)[`c.jalr    `](rv.c#L293)[`c.jr      `](rv.c#L288)[`c.li      `](rv.c#L241)[`c.lui     `](rv.c#L246)
-- [`c.lw      `](rv.c#L229)[`c.lwsp    `](rv.c#L285)[`c.mv      `](rv.c#L290)[`c.or      `](rv.c#L263)[`c.slli    `](rv.c#L283)[`c.srai    `](rv.c#L254)[`c.srli    `](rv.c#L252)[`c.sub     `](rv.c#L259)
-- [`c.sw      `](rv.c#L231)[`c.swsp    `](rv.c#L298)[`c.xor     `](rv.c#L261)[`csrrc     `](rv.c#L481)[`csrrci    `](rv.c#L481)[`csrrs     `](rv.c#L475)[`csrrsi    `](rv.c#L475)[`csrrw     `](rv.c#L466)
-- [`csrrwi    `](rv.c#L466)[`div       `](rv.c#L451)[`divu      `](rv.c#L453)[`ebreak    `](rv.c#L494)[`ecall     `](rv.c#L491)[`fence     `](rv.c#L397)[`fence.i   `](rv.c#L401)[`jal       `](rv.c#L405)
-- [`jalr      `](rv.c#L390)[`lb        `](rv.c#L330)[`lbu       `](rv.c#L338)[`lh        `](rv.c#L333)[`lhu       `](rv.c#L341)[`lui       `](rv.c#L507)[`lw        `](rv.c#L336)[`mret      `](rv.c#L489)
-- [`mul       `](rv.c#L438)[`mulh      `](rv.c#L438)[`mulhsu    `](rv.c#L438)[`mulhu     `](rv.c#L438)[`or        `](rv.c#L431)[`ori       `](rv.c#L431)[`rem       `](rv.c#L455)[`remu      `](rv.c#L457)
-- [`sb        `](rv.c#L359)[`sh        `](rv.c#L361)[`sll       `](rv.c#L421)[`slli      `](rv.c#L421)[`slt       `](rv.c#L423)[`slti      `](rv.c#L423)[`sltiu     `](rv.c#L425)[`sltu      `](rv.c#L425)
-- [`sra       `](rv.c#L429)[`srai      `](rv.c#L429)[`srl       `](rv.c#L429)[`srli      `](rv.c#L429)[`sub       `](rv.c#L419)[`sw        `](rv.c#L363)[`xor       `](rv.c#L427)[`xori      `](rv.c#L427)
+- [`add       `](rv.c#L568)[`addi      `](rv.c#L568)[`amoadd.w  `](rv.c#L527)[`amoand.w  `](rv.c#L535)[`amomax.w  `](rv.c#L539)[`amomaxu.w `](rv.c#L543)[`amomin.w  `](rv.c#L537)[`amominu.w `](rv.c#L541)
+- [`amoor.w   `](rv.c#L533)[`amoswap.w `](rv.c#L529)[`amoxor.w  `](rv.c#L531)[`and       `](rv.c#L585)[`andi      `](rv.c#L585)[`auipc     `](rv.c#L677)[`beq       `](rv.c#L474)[`bge       `](rv.c#L477)
+- [`bgtu      `](rv.c#L479)[`blt       `](rv.c#L476)[`bltu      `](rv.c#L478)[`bne       `](rv.c#L475)[`c.add     `](rv.c#L388)[`c.addi    `](rv.c#L326)[`c.addi16sp`](rv.c#L333)[`c.and     `](rv.c#L354)
+- [`c.andi    `](rv.c#L345)[`c.beqz    `](rv.c#L364)[`c.bnez    `](rv.c#L366)[`c.ebreak  `](rv.c#L385)[`c.j       `](rv.c#L362)[`c.jal     `](rv.c#L328)[`c.jalr    `](rv.c#L382)[`c.jr      `](rv.c#L377)
+- [`c.li      `](rv.c#L330)[`c.lui     `](rv.c#L335)[`c.lw      `](rv.c#L318)[`c.lwsp    `](rv.c#L374)[`c.mv      `](rv.c#L379)[`c.or      `](rv.c#L352)[`c.slli    `](rv.c#L372)[`c.srai    `](rv.c#L343)
+- [`c.srli    `](rv.c#L341)[`c.sub     `](rv.c#L348)[`c.sw      `](rv.c#L320)[`c.swsp    `](rv.c#L390)[`c.xor     `](rv.c#L350)[`csrrc     `](rv.c#L633)[`csrrci    `](rv.c#L633)[`csrrs     `](rv.c#L627)
+- [`csrrsi    `](rv.c#L627)[`csrrw     `](rv.c#L618)[`csrrwi    `](rv.c#L618)[`div       `](rv.c#L603)[`divu      `](rv.c#L605)[`ebreak    `](rv.c#L666)[`ecall     `](rv.c#L663)[`fence     `](rv.c#L496)
+- [`fence.i   `](rv.c#L500)[`jal       `](rv.c#L554)[`jalr      `](rv.c#L489)[`lb        `](rv.c#L453)[`lbu       `](rv.c#L453)[`lh        `](rv.c#L453)[`lhu       `](rv.c#L453)[`lr.w      `](rv.c#L513)
+- [`lui       `](rv.c#L679)[`lw        `](rv.c#L453)[`mret      `](rv.c#L642)[`mul       `](rv.c#L590)[`mulh      `](rv.c#L590)[`mulhsu    `](rv.c#L590)[`mulhu     `](rv.c#L590)[`or        `](rv.c#L583)
+- [`ori       `](rv.c#L583)[`rem       `](rv.c#L607)[`remu      `](rv.c#L609)[`sc.w      `](rv.c#L517)[`sfence.vma`](rv.c#L659)[`sll       `](rv.c#L573)[`slli      `](rv.c#L573)[`slt       `](rv.c#L575)
+- [`slti      `](rv.c#L575)[`sltiu     `](rv.c#L577)[`sltu      `](rv.c#L577)[`sra       `](rv.c#L581)[`srai      `](rv.c#L581)[`sret      `](rv.c#L642)[`srl       `](rv.c#L581)[`srli      `](rv.c#L581)
+- [`sub       `](rv.c#L568)[`wfi       `](rv.c#L658)[`xor       `](rv.c#L579)[`xori      `](rv.c#L579)
 
 ## FAQ
 

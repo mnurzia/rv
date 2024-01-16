@@ -14,7 +14,7 @@ if __name__ == "__main__":
     ap = ArgumentParser()
     ap.add_argument("-t", "--annotation_type", type=str, default='I')
     ap.add_argument("-c", "--columns", type=int, default=8)
-    ap.add_argument("in_file", type=FileType('r'), default=sys.stdin)
+    ap.add_argument("in_file", type=FileType('r'), default=sys.stdin, nargs='?')
     
     args = ap.parse_args()
     
