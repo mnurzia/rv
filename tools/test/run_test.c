@@ -3,7 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "../../rv.h"
+#include "rv.h"
 
 void die(const char *msg) {
   printf("%s\n", msg);

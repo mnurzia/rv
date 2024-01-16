@@ -69,22 +69,23 @@ typedef struct rv_csr {
   rv_u32 cycle, cycleh;
 } rv_csr;
 
-/* Memory access callback: data is input/output, return RV_BAD on fault */
-typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data, rv_u32 str,
-                            rv_u32 width);
-
 typedef enum rv_priv { RV_PUSER = 0, RV_PSUPER = 1, RV_PMACH = 3 } rv_priv;
 typedef enum rv_access { RV_AR = 1, RV_AW = 2, RV_AX = 4 } rv_access;
 typedef enum rv_cause { RV_CSI = 8, RV_CTI = 128, RV_CEI = 512 } rv_cause;
 
+/* Memory access callback: data is input/output, return RV_BAD on fault.
+ * Accesses are always aligned to `width`. */
+typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data,
+                            rv_u32 is_store, rv_u32 width);
+
 typedef struct rv {
   rv_bus_cb bus_cb;
-  rv_u32 r[32];
-  rv_u32 pc;
-  rv_u32 next_pc;
   void *user;
-  rv_csr csr;
-  rv_u32 priv;
+  rv_u32 r[32];   /* registers */
+  rv_u32 pc;      /* program counter */
+  rv_u32 next_pc; /* program counter for next cycle */
+  rv_csr csr;     /* csr state */
+  rv_u32 priv;    /* current privilege level*/
 #if RVA
   rv_u32 reserve, reserve_valid;
 #endif

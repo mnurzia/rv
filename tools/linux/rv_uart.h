@@ -16,8 +16,7 @@ typedef struct rv_uart_fifo {
 typedef struct rv_uart {
   rv_uart_cb cb;
   void *user;
-  rv_uart_fifo rx;
-  rv_uart_fifo tx;
+  rv_uart_fifo rx, tx;
   rv_u32 txctrl, rxctrl, ip, ie, div, clk;
 } rv_uart;
 

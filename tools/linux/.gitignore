@@ -3,3 +3,5 @@ fw_payload.elf
 rv.dtb
 vmlinux
 pull.sh
+mach
+mach-fast

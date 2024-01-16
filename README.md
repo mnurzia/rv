@@ -3,24 +3,25 @@
 RISC-V CPU core written in ANSI C.
 
 Features:
-- `RV32IMC` user-level implementation
+- `RV32IMAC_Zicsr` implementation with M-mode and S-mode
+- Boots RISCV32 Linux
 - Passes all supported tests in [`riscv-tests`](https://github.com/riscv/riscv-tests)
-- ~600 lines of code
+- ~800 lines of code
 - Doesn't use any integer types larger than 32 bits, even for multiplication
-- Simple API (two functions, plus two memory callback functions that you provide)
+- Simple API (two required functions, plus one memory callback function that you provide)
 - No memory allocations
 
 ## API
 
 ```c
-/* Memory access callbacks: data is input/output, return RV_BAD on fault, 0 otherwise */
-typedef rv_res (*rv_store_cb)(void *user, rv_u32 addr, rv_u8 data);
-typedef rv_res (*rv_load_cb)(void *user, rv_u32 addr, rv_u8 *data);
+/* Memory access callback: data is input/output, return RV_BAD on fault. */
+typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
+                            rv_u32 width);
 
-/* Initialize CPU. */
-void rv_init(rv *cpu, void *user, rv_load_cb load_cb, rv_store_cb store_cb);
+/* Initialize CPU. You can call this again on `cpu` to reset it. */
+void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 
-/* Single-step CPU. Returns 0 on success, one of RV_E* on exception. */
+/* Single-step CPU. */
 rv_u32 rv_step(rv *cpu);
 ```
 
@@ -32,18 +33,12 @@ rv_u32 rv_step(rv *cpu);
 
 #include "rv.h"
 
-rv_res load_cb(void *user, rv_u32 addr, rv_u8 *data) {
-  if (addr - 0x80000000 > 0x10000) /* Reset vector is 0x80000000 */
+rv_res bus_cb(void *user, rv_u32 addr, rv_u8 *data, rv_u32 is_store,
+              rv_u32 width) {
+  rv_u8 *mem = user + addr - 0x80000000;
+  if (addr < 0x80000000 || addr + width >= 0x80000000 + 0x10000)
     return RV_BAD;
-  *data = ((rv_u8 *)(user))[addr - 0x80000000];
-  return RV_OK;
-}
-
-rv_res store_cb(void *user, rv_u32 addr, rv_u8 data) {
-  if (addr - 0x80000000 > 0x10000)
-    return RV_BAD;
-  ((rv_u8 *)(user))[addr - 0x80000000] = data;
-  return RV_OK;
+  memcpy(is_store ? mem : data, is_store ? data : mem, width);
 }
 
 rv_u32 program[2] = {
@@ -55,14 +50,21 @@ rv_u32 program[2] = {
 int main(void) {
   rv_u8 mem[0x10000];
   rv cpu;
-  rv_init(&cpu, (void *)mem, &load_cb, &store_cb);
+  rv_init(&cpu, (void *)mem, &bus_cb);
   memcpy((void *)mem, (void *)program, sizeof(program));
-  while (rv_step(&cpu) != RV_EECALL) {
+  while (rv_step(&cpu) != RV_EMECALL) {
   }
   printf("Environment call @ %08X: %u\n", cpu.pc, cpu.r[17]);
   return 0;
 }
 ```
+
+See [`tools/example/example.c`](tools/example/example.c).
+
+## Running Linux
+
+This repository contains a machine emulator that can use `rv` to boot Linux.
+See [`tools/linux/README.md`](tools/linux/README.md).
 
 ## Targeting `rv`
 
@@ -70,7 +72,7 @@ Use [riscv-gnu-toolchain](https://github.com/riscv-collab/riscv-gnu-toolchain) w
 
 Suggested GCC commandline:
 
-`riscv64-unknown-elf-gcc example.S -nostdlib -nostartfiles -Tlink.ld -march=rv32imc -mabi=ilp32 -o example.o -e _start -g -no-pie`
+`riscv64-unknown-elf-gcc example.S -nostdlib -nostartfiles -Tlink.ld -march=rv32imac -mabi=ilp32 -o example.o -e _start -g -no-pie`
 
 To dump a binary starting at `0x80000000` that can be directly loaded by `rv` as in the above example:
 
