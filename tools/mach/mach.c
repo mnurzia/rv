@@ -154,8 +154,8 @@ int open_sock(void) {
 }
 
 rv_res uart_io(void *user, rv_u8 *byte, rv_u32 w) {
-  (void)(user);
   static int throttle = 0;
+  (void)(user);
   if (w) {
     write(STDOUT_FILENO, byte, 1);
   } else {
@@ -261,7 +261,7 @@ int main(int argc, const char *const *argv) {
   cpu.r[11] /* a1 */ = dtb_addr; /* dtb ptr */
   {
     do {
-      rv_u32 irq = 0, pprv = cpu.priv;
+      rv_u32 irq = 0;
       if (!((period = (period + 1)) & 0xFFF))
         if (!++cpu.csr.mtime)
           cpu.csr.mtimeh++;
