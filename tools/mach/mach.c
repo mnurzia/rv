@@ -8,10 +8,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "../rv.h"
-#include "../rv_clint.h"
-#include "../rv_plic.h"
-#include "../rv_uart.h"
+#include "rv.h"
+#include "rv_clint.h"
+#include "rv_plic.h"
+#include "rv_uart.h"
 
 unsigned long ninstr = 0;
 rv_u32 gres = 0;
@@ -183,6 +183,8 @@ rv_res uart_io(void *user, rv_u8 *byte, rv_u32 w) {
 rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 w) {
   mach *m = user;
   static int throttle = 0;
+  if (!m->gdb_socket)
+    return RV_BAD;
   if (w) {
     write(m->gdb_socket, byte, 1);
   } else {
@@ -209,7 +211,7 @@ rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 w) {
 int main(int argc, const char *const *argv) {
   rv cpu;
   mach mach;
-  rv_u32 dtb_addr;
+  rv_u32 dtb_addr = 0;
   rv_u32 period = 0;
   unsigned long instr_limit = 0;
   if (argc >= 4)
@@ -221,7 +223,7 @@ int main(int argc, const char *const *argv) {
   (void)argv;
   mach.ram = malloc(MACH_RAM_SIZE);
   mach.cpu = &cpu;
-  mach.gdb_socket = open_sock();
+  mach.gdb_socket = 0;
   memset(mach.ram, 0, MACH_RAM_SIZE);
   {
     long sz;
@@ -237,14 +239,16 @@ int main(int argc, const char *const *argv) {
   {
     long sz;
     FILE *f = fopen(argv[2], "rb");
-    fseek(f, 0L, SEEK_END);
-    sz = ftell(f);
-    assert(sz > 0);
-    fseek(f, 0L, SEEK_SET);
-    dtb_addr = MACH_RAM_BASE + 0x2200000; /* DTB should be aligned */
-    fread(mach.ram + (dtb_addr - MACH_RAM_BASE), 1, (unsigned long)sz, f);
-    fclose(f);
-    printf("Loaded %li byte DTB.\n", (unsigned long)sz);
+    if (f) {
+      fseek(f, 0L, SEEK_END);
+      sz = ftell(f);
+      assert(sz > 0);
+      fseek(f, 0L, SEEK_SET);
+      dtb_addr = MACH_RAM_BASE + 0x2200000; /* DTB should be aligned */
+      fread(mach.ram + (dtb_addr - MACH_RAM_BASE), 1, (unsigned long)sz, f);
+      fclose(f);
+      printf("Loaded %li byte DTB.\n", (unsigned long)sz);
+    }
   }
   rv_init(&cpu, &mach, &mach_bus);
   rv_plic_init(&mach.plic);

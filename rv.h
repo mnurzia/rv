@@ -66,6 +66,7 @@ typedef struct rv_csr {
   rv_u32 mstatus, misa, medeleg, mideleg, mie, mtvec, mcounteren, mstatush,
       mscratch, mepc, mcause, mtval, mip, mtime, mtimeh, mvendorid, marchid,
       mimpid, mhartid;
+  rv_u32 cycle, cycleh;
 } rv_csr;
 
 /* Memory access callback: data is input/output, return RV_BAD on fault */

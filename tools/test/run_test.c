@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-#include "../rv.h"
+#include "../../rv.h"
 
 void die(const char *msg) {
   printf("%s\n", msg);
@@ -11,14 +12,29 @@ void die(const char *msg) {
 
 rv_u8 mem[0x10000];
 
+int done = 0;
+
 rv_res bus_cb(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
               rv_u32 width) {
   rv_u8 *ptr = mem + (addr - 0x80000000);
   (void)(user);
-  if (addr < 0x80000000 || (addr + width) >= 0x80000000 + sizeof(mem))
+  if (addr < 0x80000000 || (addr + width) >= 0x80000000 + sizeof(mem)) {
     return RV_BAD;
-  memcpy(store ? ptr : data, store ? data : ptr, width);
-  return 0;
+  } else
+    memcpy(store ? ptr : data, store ? data : ptr, width);
+  return RV_OK;
+}
+
+void dump_cpu(rv *r) {
+  rv_u32 i, j;
+  printf("PC %08X\n", r->pc);
+  for (i = 0; i < 8; i++)
+    for (j = 0; j < 4; j++)
+      printf("x%02d: %08X%s", i + j * 8, r->r[i + j * 8], j == 3 ? "\n" : "  ");
+  printf("mstatus: %08X  mcause:  %08X  mtvec:   %08X\n", r->csr.mstatus,
+         r->csr.mcause, r->csr.mtvec);
+  printf("mip:     %08X  mie:     %08X\n", r->csr.mip, r->csr.mie);
+  printf("priv:    %8X\n", r->priv);
 }
 
 int main(int argc, const char **argv) {
@@ -33,7 +49,7 @@ int main(int argc, const char **argv) {
   if (argc == 3) {
     char *end;
     limit = strtoul(argv[2], &end, 10);
-    if (!end)
+    if (!limit)
       die("invalid number of instructions");
   }
   (void)argc;
@@ -42,11 +58,11 @@ int main(int argc, const char **argv) {
   rv_init(&cpu, NULL, &bus_cb);
   while (1 && (!limit || ninstr++ < limit)) {
     rv_u32 v = rv_step(&cpu);
-    if (v == RV_EMECALL || v == RV_EUECALL || v == RV_ESECALL) {
-      if (cpu.r[17] == 93 && !cpu.r[10]) {
-        return EXIT_SUCCESS;
-      }
-    }
+    printf("%04lu %08X\n", ninstr, cpu.pc);
+    if ((v == RV_EUECALL || v == RV_ESECALL || v == RV_EMECALL) &&
+        (cpu.r[3] == 1 && cpu.r[10] == 0))
+      return EXIT_SUCCESS;
   }
+  dump_cpu(&cpu);
   return EXIT_FAILURE;
 }
