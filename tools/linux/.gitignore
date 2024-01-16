@@ -1,0 +1,5 @@
+fw_payload.bin
+fw_payload.elf
+rv.dtb
+vmlinux
+pull.sh

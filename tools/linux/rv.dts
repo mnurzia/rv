@@ -1,0 +1,99 @@
+/dts-v1/;
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "maxnu,rv32";
+
+	aliases {
+		serial0 = &uart0;
+		serial1 = &uart1;
+	};
+
+	chosen {
+		bootargs = "earlycon=sifive,0x3000000 console=ttySIF0";
+		stdout-path = "/soc/serial@3000000";
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x8000000>;
+	};
+
+	timer: timer@0 {
+		#clock-cells = <0>;
+		compatible = "riscv", "riscv,timer";
+		interrupts-extended = <&intc 5>;
+		reg = <0>;
+	};
+
+	hfclk: hfclk {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+		clock-frequency = <33333333>;
+		clock-output-names = "hfclk";
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <1000>;
+		cpu@0 {
+			device_type = "cpu";
+			reg = <0>;
+			status = "okay";
+			compatible = "riscv";
+			riscv,isa = "rv32imac";
+			clock-frequency = <0>;
+
+			intc: interrupt-controller {
+				#interrupt-cells = <1>;
+				compatible = "riscv,cpu-intc";
+				interrupt-controller;
+			};
+		};
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		clint: clint@2000000 {
+			#interrupt-cells = <1>;
+			compatible = "riscv,clint0";
+			reg = <0x2000000 0xC000>;
+			interrupts-extended =  <&intc 3 &intc 7>;
+		};
+
+		plic: interrupt-controller@c000000 {
+			#address-cells = <0>;
+			#interrupt-cells = <1>;
+			#size-cells = <1>;
+			compatible = "riscv,plic0";
+			reg = <0xC000000 0x4000000>;
+			interrupts-extended = <&intc 9 &intc 0xFFFFFFFF>;
+			riscv,ndev = <32>;
+			interrupt-controller;
+		};
+
+		uart0: serial@3000000 {
+			compatible = "sifive,uart0";
+			reg = <0x3000000 0x20>;
+			interrupt-parent = <&plic>;
+			interrupts = <1>;
+			clocks = <&hfclk>;
+			no-loopback-test;
+		};
+
+		uart1: serial@6000000 {
+			compatible = "sifive,uart0";
+			reg = <0x6000000 0x20>;
+			interrupt-parent = <&plic>;
+			interrupts = <2>;
+			clocks = <&hfclk>;
+			no-loopback-test;
+		};
+	};
+};
