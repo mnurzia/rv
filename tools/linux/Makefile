@@ -9,15 +9,5 @@ mach: mach.c $(SRCS) $(HDRS)
 mach-fast: mach.c $(SRCS) $(HDRS)
 	$(CC) $(CFLAGS) $(SRCS) -o $@
 
-build/buildroot.tar.xz:
-	mkdir -p build
-	curl -L https://buildroot.org/downloads/buildroot-2023.11.1.tar.gz -o $@
-	tar -C build -xf $@ 
-
-linux: build/buildroot.tar.xz
-	make BR2_EXTERNAL=$(shell realpath ./build/buildroot) -C build/buildroot* rv_defconfig
-	make BR2_EXTERNAL=$(shell realpath ./build/buildroot) -C build/buildroot* 
-	make BR2_EXTERNAL=$(shell realpath ./build/buildroot) -C build/buildroot* linux-rebuild opensbi-rebuild all
-
 clean:
 	rm -rf mach mach-fast
