@@ -7,7 +7,7 @@ void rv_uart_fifo_init(rv_uart_fifo *fifo) { memset(fifo, 0, sizeof(*fifo)); }
 void rv_uart_fifo_put(rv_uart_fifo *fifo, rv_u8 byte) {
   if (fifo->size == RV_UART_FIFO_SIZE)
     return;
-  fifo->buf[(fifo->read + fifo->size) & RV_UART_FIFO_SIZE - 1] = byte;
+  fifo->buf[(fifo->read + fifo->size) & (RV_UART_FIFO_SIZE - 1)] = byte;
   fifo->size++;
 }
 
