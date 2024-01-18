@@ -103,9 +103,12 @@ Click an instruction to see its implementation in `rv.c`.
 
 ### No switch statements!
 
-- C only allows constant expressions in switch statements. In addition to an abundance of `break` statements using these would result in more bloated code in the author's opinion. You are free to reimplement this code with switch statements. See [LICENSE.txt](LICENSE.txt).
+- C only allows constant expressions in switch statements. In addition to an abundance of `break` statements using these would result in more bloated code in the author's opinion. As it turns out, you are actually free to reimplement this code with switch statements. See [LICENSE.txt](LICENSE.txt).
 
 ### Not useful!
+- [Ok](https://www.google.com/search?q=happy+smiley+thumbs+up+happy+cool+funny+ok&tbm=isch)
+
+### Slow!
 - [Ok](https://www.google.com/search?q=happy+smiley+thumbs+up+happy+cool+funny+ok&tbm=isch)
 
 ## Caveats
