@@ -3,10 +3,10 @@ HDRS=rv.h rv_clint.h rv_plic.h rv_uart.h
 
 CFLAGS=--std=c89 -Wall -Wextra -pedantic -Wshadow -g
 
-mach: mach.c $(SRCS) $(HDRS)
+mach: $(SRCS) $(HDRS)
 	$(CC) $(CFLAGS) $(SRCS) -o $@
 
-mach-fast: mach.c $(SRCS) $(HDRS)
+mach-fast: $(SRCS) $(HDRS)
 	$(CC) $(CFLAGS) $(SRCS) -o $@
 
 clean:
