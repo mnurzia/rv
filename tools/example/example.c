@@ -3,10 +3,13 @@
 
 #include "rv.h"
 
+#define RAM_BASE 0x80000000
+#define RAM_SIZE 0x10000
+
 rv_res bus_cb(void *user, rv_u32 addr, rv_u8 *data, rv_u32 is_store,
               rv_u32 width) {
-  rv_u8 *mem = (rv_u8 *)user + addr - 0x80000000;
-  if (addr < 0x80000000 || addr + width >= 0x80000000 + 0x10000)
+  rv_u8 *mem = (rv_u8 *)user + addr - RAM_BASE;
+  if (addr < RAM_BASE || addr + width >= RAM_BASE + RAM_SIZE)
     return RV_BAD;
   memcpy(is_store ? mem : data, is_store ? data : mem, width);
   return RV_OK;
@@ -19,7 +22,7 @@ rv_u32 program[2] = {
 };
 
 int main(void) {
-  rv_u8 mem[0x10000];
+  rv_u8 mem[RAM_SIZE];
   rv cpu;
   rv_init(&cpu, (void *)mem, &bus_cb);
   memcpy((void *)mem, (void *)program, sizeof(program));
