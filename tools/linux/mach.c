@@ -47,9 +47,11 @@ rv_res mach_bus(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
 
 rv_res uart_io(void *user, rv_u8 *byte, rv_u32 write) {
   int ch;
+  static int thrott = 0; /* prevent getch() from being called too much */
+  (void)user;
   if (write && *byte != '\r') /* curses bugs out if we echo '\r' */
     echochar(*byte);
-  else if (!write && (ch = getch()) == ERR)
+  else if (!write && (!(thrott = thrott + 1 & 0xFF) || (ch = getch()) == ERR))
     return RV_BAD;
   else if (!write)
     *byte = (rv_u8)ch;
@@ -57,15 +59,19 @@ rv_res uart_io(void *user, rv_u8 *byte, rv_u32 write) {
 }
 
 rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 write) {
+  (void)user, (void)byte, (void)write;
   /* your very own uart, do whatever you want with it! */
   return RV_BAD; /* stubbed for now */
 }
 
 void load(const char *path, rv_u8 *buf, rv_u32 max_size) {
   FILE *f = fopen(path, "rb");
+  if (!f) {
+    printf("unable to load file %s\n", path);
+    exit(EXIT_FAILURE);
+  }
   fread(buf, 1, max_size, f);
   fclose(f);
-  printf("loaded %s\n", path);
 }
 
 int main(int argc, const char *const *argv) {
@@ -73,20 +79,18 @@ int main(int argc, const char *const *argv) {
   mach mach;
   rv_u32 rtc_period = 0;
 
+  if (argc != 3) {
+    printf("expected a firmware image and a binary device tree\n");
+    exit(EXIT_FAILURE);
+  }
+
   /* initialize machine */
   memset(&mach, 0, sizeof(mach));
   mach.ram = malloc(MACH_RAM_SIZE);
   mach.cpu = &cpu;
   memset(mach.ram, 0, MACH_RAM_SIZE);
 
-  /* ncurses setup */
-  initscr();              /* initialize screen */
-  cbreak();               /* don't buffer input chars */
-  noecho();               /* don't echo input chars */
-  scrollok(stdscr, TRUE); /* allow the screen to autoscroll */
-  nodelay(stdscr, TRUE);  /* enable nonblocking input */
-
-  /* rv setup */
+  /* peripheral setup */
   rv_init(&cpu, &mach, &mach_bus);
   rv_plic_init(&mach.plic);
   rv_clint_init(&mach.clint, &cpu);
@@ -97,8 +101,14 @@ int main(int argc, const char *const *argv) {
   load(argv[1], mach.ram, MACH_RAM_SIZE);
   load(argv[2], mach.ram + MACH_DTB_OFFSET, MACH_RAM_SIZE - MACH_DTB_OFFSET);
 
-  /* the bootloader expects the following three lines */
-  cpu.pc = MACH_RAM_BASE;
+  /* ncurses setup */
+  initscr();              /* initialize screen */
+  cbreak();               /* don't buffer input chars */
+  noecho();               /* don't echo input chars */
+  scrollok(stdscr, TRUE); /* allow the screen to autoscroll */
+  nodelay(stdscr, TRUE);  /* enable nonblocking input */
+
+  /* the bootloader and linux expect the following: */
   cpu.r[10] /* a0 */ = 0;                               /* hartid */
   cpu.r[11] /* a1 */ = MACH_RAM_BASE + MACH_DTB_OFFSET; /* dtb ptr */
   do {
