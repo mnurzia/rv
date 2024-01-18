@@ -398,7 +398,7 @@ static rv_u32 rvc(rv_u32 c) {
 static rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
                      rv_access access) {
   rv_u32 err, pa /* physical address */;
-  if (*va & width - 1)
+  if (*va & (width - 1))
     return RV_BAD_ALIGN;
   if ((err = rv_vmm(cpu, *va, &pa, access)))
     return err; /* page or access fault */
@@ -452,7 +452,8 @@ static rv_u32 rv_service(rv *cpu) {
 /* single step */
 rv_u32 rv_step(rv *cpu) {
   rv_u32 i, tval, err = rv_if(cpu, &i, &tval); /* fetch instruction into i */
-  cpu->csr.cycle++ || cpu->csr.cycleh++; /* add to cycle,cycleh with carry */
+  if (!++cpu->csr.cycle)
+    cpu->csr.cycleh++; /* add to cycle,cycleh with carry */
   if (err)
     return rv_trap_bus(cpu, err, tval, RV_AX); /* instruction fetch error */
   if (rv_isz(i) != 4)

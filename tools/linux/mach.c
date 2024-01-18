@@ -54,7 +54,7 @@ rv_res uart0_io(void *user, rv_u8 *byte, rv_u32 write) {
   (void)user;
   if (write && *byte != '\r') /* curses bugs out if we echo '\r' */
     echochar(*byte);
-  else if (!write && (!(thrott = thrott + 1 & 0xFF) || (ch = getch()) == ERR))
+  else if (!write && (!(thrott = (thrott + 1) & 0xFF) || (ch = getch()) == ERR))
     return RV_BAD;
   else if (!write)
     *byte = (rv_u8)ch;
@@ -81,7 +81,7 @@ void load(const char *path, rv_u8 *buf, rv_u32 max_size) {
 
 int main(int argc, const char *const *argv) {
   rv cpu;
-  mach mach;
+  mach m;
   rv_u32 rtc_period = 0;
 
   if (argc != 3) {
@@ -90,21 +90,21 @@ int main(int argc, const char *const *argv) {
   }
 
   /* initialize machine */
-  memset(&mach, 0, sizeof(mach));
-  mach.ram = malloc(MACH_RAM_SIZE);
-  mach.cpu = &cpu;
-  memset(mach.ram, 0, MACH_RAM_SIZE);
+  memset(&m, 0, sizeof(m));
+  m.ram = malloc(MACH_RAM_SIZE);
+  m.cpu = &cpu;
+  memset(m.ram, 0, MACH_RAM_SIZE);
 
   /* peripheral setup */
-  rv_init(&cpu, &mach, &mach_bus);
-  rv_plic_init(&mach.plic0);
-  rv_clint_init(&mach.clint0, &cpu);
-  rv_uart_init(&mach.uart0, NULL, &uart0_io);
-  rv_uart_init(&mach.uart1, &mach, &uart1_io);
+  rv_init(&cpu, &m, &mach_bus);
+  rv_plic_init(&m.plic0);
+  rv_clint_init(&m.clint0, &cpu);
+  rv_uart_init(&m.uart0, NULL, &uart0_io);
+  rv_uart_init(&m.uart1, &m, &uart1_io);
 
   /* load kernel and dtb */
-  load(argv[1], mach.ram, MACH_RAM_SIZE);
-  load(argv[2], mach.ram + MACH_DTB_OFFSET, MACH_RAM_SIZE - MACH_DTB_OFFSET);
+  load(argv[1], m.ram, MACH_RAM_SIZE);
+  load(argv[2], m.ram + MACH_DTB_OFFSET, MACH_RAM_SIZE - MACH_DTB_OFFSET);
 
   /* ncurses setup */
   initscr();              /* initialize screen */
@@ -122,13 +122,13 @@ int main(int argc, const char *const *argv) {
       if (!++cpu.csr.mtime)
         cpu.csr.mtimeh++;
     rv_step(&cpu);
-    if (rv_uart_update(&mach.uart0))
-      rv_plic_irq(&mach.plic0, 1);
-    if (rv_uart_update(&mach.uart1))
-      rv_plic_irq(&mach.plic0, 2);
-    irq = RV_CSI * rv_clint_msi(&mach.clint0, 0) |
-          RV_CTI * rv_clint_mti(&mach.clint0, 0) |
-          RV_CEI * rv_plic_mei(&mach.plic0, 0);
+    if (rv_uart_update(&m.uart0))
+      rv_plic_irq(&m.plic0, 1);
+    if (rv_uart_update(&m.uart1))
+      rv_plic_irq(&m.plic0, 2);
+    irq = RV_CSI * rv_clint_msi(&m.clint0, 0) |
+          RV_CTI * rv_clint_mti(&m.clint0, 0) |
+          RV_CEI * rv_plic_mei(&m.plic0, 0);
     rv_irq(&cpu, irq);
   } while (1);
   return EXIT_SUCCESS; /* challenge: try and make this program return 0 */

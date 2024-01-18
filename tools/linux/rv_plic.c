@@ -10,8 +10,7 @@ rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
   rv_u32 *reg = NULL, wmask = 0 - 1U, *data = (rv_u32 *)d;
   if (addr >= RV_PLIC_SIZE || width != 4)
     return RV_BAD;
-  else if (addr >= 0 &&
-           addr < RV_PLIC_NSRC * 4) /*R Interrupt Source Priority */
+  else if (addr < RV_PLIC_NSRC * 4) /*R Interrupt Source Priority */
     reg = plic->priority + (addr >> 2), wmask *= !!addr;
   else if (addr >= 0x1000 &&
            addr < 0x1000 + RV_PLIC_NSRC / 8) /*R Interrupt Pending Bits */
