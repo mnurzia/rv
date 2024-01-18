@@ -15,13 +15,12 @@ Features:
 
 ```c
 /* Memory access callback: data is input/output, return RV_BAD on fault. */
-typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
-                            rv_u32 width);
+typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store, rv_u32 width);
 
 /* Initialize CPU. You can call this again on `cpu` to reset it. */
 void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 
-/* Single-step CPU. */
+/* Single-step CPU. Returns RV_E* on exception. */
 rv_u32 rv_step(rv *cpu);
 ```
 
@@ -35,16 +34,17 @@ rv_u32 rv_step(rv *cpu);
 
 rv_res bus_cb(void *user, rv_u32 addr, rv_u8 *data, rv_u32 is_store,
               rv_u32 width) {
-  rv_u8 *mem = user + addr - 0x80000000;
+  rv_u8 *mem = (rv_u8 *)user + addr - 0x80000000;
   if (addr < 0x80000000 || addr + width >= 0x80000000 + 0x10000)
     return RV_BAD;
   memcpy(is_store ? mem : data, is_store ? data : mem, width);
+  return RV_OK;
 }
 
 rv_u32 program[2] = {
-    /* _start: */
-    0x02A88893, /* add a7, a7, 42 */
-    0x00000073  /* ecall */
+    /*            */             /* _start: */
+    /* 0x80000000 */ 0x02A88893, /* add a7, a7, 42 */
+    /* 0x80000004 */ 0x00000073  /* ecall */
 };
 
 int main(void) {
@@ -54,9 +54,10 @@ int main(void) {
   memcpy((void *)mem, (void *)program, sizeof(program));
   while (rv_step(&cpu) != RV_EMECALL) {
   }
-  printf("Environment call @ %08X: %u\n", cpu.pc, cpu.r[17]);
+  printf("Environment call @ %08X: %u\n", cpu.csr.mepc, cpu.r[17]);
   return 0;
 }
+
 ```
 
 See [`tools/example/example.c`](tools/example/example.c).
