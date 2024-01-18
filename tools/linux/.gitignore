@@ -2,6 +2,7 @@ fw_payload.bin
 fw_payload.elf
 rv.dtb
 vmlinux
-pull.sh
+pull*.sh
 mach
 mach-fast
+build/

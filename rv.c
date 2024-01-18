@@ -4,21 +4,27 @@
 
 #define RV_RESET_VEC 0x80000000 /* CPU reset vector */
 
+#define rv_ext(c) (1 << (rv_u8)((c) - 'A')) /* isa extension bit in misa */
+
 void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb) {
   memset(cpu, 0, sizeof(*cpu));
   cpu->user = user;
   cpu->bus_cb = bus_cb;
   cpu->pc = RV_RESET_VEC;
-  cpu->csr.misa = (1 << 30) | (RVM << 12) | (RVC << 2) | (RVA << 0) |
-                  (RVS << 18) | (RVS << 20);
+  cpu->csr.misa = (1 << 30)     /* MXL = 1 [XLEN=32] */
+                  | rv_ext('M') /* Multiplication and Division */
+                  | rv_ext('C') /* Compressed Instructions */
+                  | rv_ext('A') /* Atomics */
+                  | rv_ext('S') /* Supervisor Mode */
+                  | rv_ext('U') /* User Mode */;
   cpu->priv = RV_PMACH;
 }
 
 /* sign-extend x from h'th bit */
 static rv_u32 rv_signext(rv_u32 x, rv_u32 h) { return (0 - (x >> h)) << h | x; }
 
-#define RV_SBIT 0x80000000                  /* sign bit */
-#define rv_sgn(x) (!!((rv_u32)(x)&RV_SBIT)) /* extract sign */
+#define RV_SBIT 0x80000000                    /* sign bit */
+#define rv_sgn(x) (!!((rv_u32)(x) & RV_SBIT)) /* extract sign */
 
 /* compute overflow */
 #define rv_ovf(a, b, y) ((((a) ^ (b)) & RV_SBIT) && (((y) ^ (a)) & RV_SBIT))
@@ -58,12 +64,13 @@ static rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; }
 /* store register */
 static void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) { cpu->r[i] = i ? v : 0; }
 
-/* csr operation */
-static rv_res rv_csr_bus(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 w, rv_u32 *out) {
-  rv_u32 *y /* output */, wmask = (rv_u32)-1, rmask = wmask;
+/* csr bus access */
+static rv_res rv_csr_bus(rv *cpu, rv_u32 csr, rv_u32 w, rv_u32 *io) {
+  rv_u32 *y /* the register */, wmask = (rv_u32)-1, rmask = wmask;
   rv_u32 rw = rv_bf(csr, 11, 10), priv = rv_bf(csr, 9, 8);
-  if ((w && rw == 3) || cpu->priv < priv)
-    return RV_BAD;
+  if ((w && rw == 3) || cpu->priv < priv ||
+      (csr == 0x180 && cpu->priv == RV_PSUPER && rv_b(cpu->csr.mstatus, 20)))
+    return RV_BAD;    /* invalid access OR writing to satp with tvm=1 */
   if (csr == 0x100) { /*C sstatus */
     y = &cpu->csr.mstatus, wmask = rmask = 0x800DE762;
   } else if (csr == 0x104) { /*C sie */
@@ -82,8 +89,7 @@ static rv_res rv_csr_bus(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 w, rv_u32 *out) {
     y = &cpu->csr.stval;
   } else if (csr == 0x144) { /*C sip */
     y = &cpu->csr.mip, wmask = 0x222, rmask = 0x222;
-  } else if (csr == 0x180 && !(cpu->priv == RV_PSUPER &&
-                               rv_b(cpu->csr.mstatus, 20))) { /*C satp */
+  } else if (csr == 0x180) { /*C satp */
     y = &cpu->csr.satp;
   } else if (csr == 0x300) { /*C mstatus */
     y = &cpu->csr.mstatus, wmask = rmask = 0x807FFFEC;
@@ -133,23 +139,13 @@ static rv_res rv_csr_bus(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 w, rv_u32 *out) {
     y = &cpu->csr.mhartid;
   } else
     return RV_BAD;
-  *out = *y & rmask;
-  *y = w ? (*y & ~wmask) | (v & wmask) : *y; /* write relevant bits in v to p */
+  *io = w ? *io : (*y & rmask);
+  *y = w ? (*y & ~wmask) | (*io & wmask) : *y; /* write relevant bits to p */
   return RV_OK;
 }
 
-/* store csr */
-static rv_res rv_scsr(rv *cpu, rv_u32 csr, rv_u32 v, rv_u32 *out) {
-  return rv_csr_bus(cpu, csr, v, 1 /* write */, out);
-}
-
-/* load csr */
-static rv_res rv_lcsr(rv *cpu, rv_u32 csr, rv_u32 *out) {
-  return rv_csr_bus(cpu, csr, 0, 0 /* read */, out);
-}
-
-/* set exception state */
-static rv_u32 rv_except(rv *cpu, rv_u32 cause, rv_u32 tval) {
+/* trigger a trap */
+static rv_u32 rv_trap(rv *cpu, rv_u32 cause, rv_u32 tval) {
   rv_u32 is_interrupt = !!(cause & 0x80000000), rcause = cause & ~0x80000000;
   rv_priv xp = /* destination privilege, switch from y = cpu->priv to this */
       (cpu->priv < RV_PMACH) &&
@@ -176,6 +172,15 @@ static rv_u32 rv_except(rv *cpu, rv_u32 cause, rv_u32 tval) {
   return cause;
 }
 
+/* bus access trap with tval */
+static rv_u32 rv_trap_bus(rv *cpu, rv_u32 err, rv_u32 tval, rv_access a) {
+  static const rv_u32 except[] = {RV_EIFAULT, RV_EIALIGN, RV_EIPAGE,
+                                  RV_ELFAULT, RV_ELALIGN, RV_ELPAGE,
+                                  RV_ESFAULT, RV_ESALIGN, RV_ESPAGE};
+  rv_u32 i = a == RV_AR ? 1 : a == RV_AW ? 2 : 0;
+  return rv_trap(cpu, except[i * 3 + err - 1], tval);
+}
+
 /* sv32 virtual address -> physical address */
 static rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
   rv_u32 epriv = rv_b(cpu->csr.mstatus, 17) && access != RV_AX
@@ -190,8 +195,8 @@ static rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
     if (cpu->tlb_valid && cpu->tlb_va == (va & ~0xFFFU))
       pte = cpu->tlb_pte, tlb_hit = 1, i = cpu->tlb_i;
     while (!tlb_hit) {
-      pte_address = a + (rv_bf(va, 21 + 10 * i, 12 + 10 * i)
-                         << 2); /* pte_address = a + va.vpn[i] * PTESIZE */
+      /* pte_address = a + va.vpn[i] * PTESIZE */
+      pte_address = a + (rv_bf(va, 21 + 10 * i, 12 + 10 * i) << 2);
       if (cpu->bus_cb(cpu->user, pte_address, (rv_u8 *)&pte, 0, 4))
         return RV_BAD;
       if (!rv_b(pte, 0) || (!rv_b(pte, 1) && rv_b(pte, 2)))
@@ -204,8 +209,8 @@ static rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
       a = rv_tbf(pte, 31, 10, 12); /* a = pte.ppn[*] * PAGESIZE */
     }
     if (!tlb_hit)
-      cpu->tlb_valid = 1, cpu->tlb_va = va & ~0xFFFU, cpu->tlb_pte = pte,
-      cpu->tlb_i = i;
+      cpu->tlb_va = va & ~0xFFFU, cpu->tlb_pte = pte, cpu->tlb_i = i,
+      cpu->tlb_valid = 1;
     if (!rv_b(pte, 4) && epriv == RV_PUSER)
       return RV_PAGEFAULT; /* u-bit not set */
     if (epriv == RV_PSUPER && !rv_b(cpu->csr.mstatus, 18) && rv_b(pte, 4))
@@ -223,8 +228,6 @@ static rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
   }
   return RV_OK;
 }
-
-#ifdef RVM
 
 #define rvm_lo(w) ((w) & (rv_u32)0xFFFFU) /* low 16 bits of 32-bit word */
 #define rvm_hi(w) ((w) >> 16)             /* high 16 bits of 32-bit word */
@@ -260,9 +263,6 @@ static rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) {
   return x | (y << 16);                    /*   lo   = (y, x)       */
 }
 
-#endif
-
-#ifdef RVC
 #define rvc_op(c) rv_bf(c, 1, 0)           /* c. op */
 #define rvc_f3(c) rv_bf(c, 15, 13)         /* c. funct3 */
 #define rvc_rp(r) ((r) + 8)                /* c. r' register offsetter */
@@ -309,7 +309,7 @@ static rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) {
    (f3) << 12 | rv_bf(imm, 4, 1) << 8 | rv_b(imm, 11) << 7 | (op) << 2 | 3)
 
 /* decompress instruction */
-static rv_u32 rvc_inst(rv_u32 c) {
+static rv_u32 rvc(rv_u32 c) {
   if (rvc_op(c) == 0) {
     if (rvc_f3(c) == 0 && c != 0) { /* c.addi4spn -> addi rd', x2, nzuimm */
       return rv_i_i(4, 0, rvc_irpl(c), 2, rvc_imm_ciw(c));
@@ -396,12 +396,13 @@ static rv_u32 rvc_inst(rv_u32 c) {
     return 0;
   }
 }
-#endif /* RVC */
 
 /* perform a bus access. access == RV_AW stores data. */
 static rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
                      rv_access access) {
   rv_u32 err, pa /* physical address */;
+  if (*va & width - 1)
+    return RV_BAD_ALIGN;
   if ((err = rv_vmm(cpu, *va, &pa, access)))
     return err; /* page or access fault */
   if (((pa + width - 1) ^ pa) & ~0xFFFU) /* page bound overrun */ {
@@ -416,45 +417,45 @@ static rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
 }
 
 /* instruction fetch */
-static rv_u32 rv_if(rv *cpu, rv_u32 *i, rv_u32 *io) {
-  rv_u32 err, page = (cpu->pc ^ (cpu->pc + 3)) & ~0xFFFU, pc = cpu->pc & ~3U;
-  if (cpu->pc & 2 || page) { /* perform if in <=2 2-byte fetches */
+static rv_u32 rv_if(rv *cpu, rv_u32 *i, rv_u32 *tval) {
+  rv_u32 err, page = (cpu->pc ^ (cpu->pc + 3)) & ~0xFFFU, pc = cpu->pc;
+  if (cpu->pc & 2 || page) { /* perform if in 2-byte fetches */
     rv_u32 ia /* first half of instruction */ = 0, ib /* second half */ = 0;
-    pc = cpu->pc;
-    if ((err = rv_bus(cpu, &pc, (rv_u8 *)&ia, 2, RV_AX)))
-      return err;
-    if (rv_isz(ia) == 4 && (pc += 2, 1) &&
-        (err = rv_bus(cpu, &pc, (rv_u8 *)&ib, 2, RV_AX)) && (cpu->pc += 2, 1))
-      return err;
+    if ((err = rv_bus(cpu, &pc, (rv_u8 *)&ia, 2, RV_AX))) /* fetch 1st half */
+      goto error;
+    if (rv_isz(ia) == 4 && (pc += 2, 1) && /* if instruction is 4 byte wide */
+        (err = rv_bus(cpu, &pc, (rv_u8 *)&ib, 2, RV_AX))) /* fetch 2nd half */
+      goto error; /* need pc += 2 above for accurate {page}fault traps */
     *i = (rv_u32)ia | (rv_u32)ib << 16U;
   } else if ((err = rv_bus(cpu, &pc, (rv_u8 *)i, 4, RV_AX))) /* 4-byte fetch */
-    return err;
+    goto error;
   cpu->next_pc = cpu->pc + rv_isz(*i);
-  *io = *i;
-#if RVC
+  *tval = *i; /* original inst as tval for accurate illegal instruction traps */
   if (rv_isz(*i) < 4)
-    *i = rvc_inst(*i & 0xFFFF);
-#endif
+    *i = rvc(*i & 0xFFFF);
   return RV_OK;
+error:
+  *tval = pc; /* pc as tval for instruction {page}fault traps */
+  return err;
 }
 
 /* single step */
 rv_u32 rv_step(rv *cpu) {
-  rv_u32 i, io, err = rv_if(cpu, &i, &io); /* fetch instruction into i */
-  cpu->csr.cycle++ && cpu->csr.cycleh++;
+  rv_u32 i, tval, err = rv_if(cpu, &i, &tval); /* fetch instruction into i */
+  cpu->csr.cycle++ || cpu->csr.cycleh++; /* add to cycle,cycleh with carry */
   if (err)
-    return rv_except(cpu, err == RV_BAD ? RV_EIFAULT : RV_EIPAGE, cpu->pc);
+    return rv_trap_bus(cpu, err, tval, RV_AX); /* instruction fetch error */
   if (rv_isz(i) != 4)
-    return rv_except(cpu, RV_EILL, io);
+    return rv_trap(cpu, RV_EILL, tval); /* instruction length invalid */
   if (rv_iopl(i) == 0) {
     if (rv_ioph(i) == 0) { /*Q 00/000: LOAD */
       rv_u32 va /* virtual address */ = rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i);
       rv_u32 v /* loaded value */ = 0, w /* value width */, sx /* sign ext. */;
       w = 1 << (rv_if3(i) & 3), sx = ~rv_if3(i) & 4; /*I lb, lh, lw, lbu, lhu */
       if ((err = rv_bus(cpu, &va, (rv_u8 *)&v, w, RV_AR)))
-        return rv_except(cpu, err == RV_BAD ? RV_ELFAULT : RV_ELPAGE, va);
+        return rv_trap_bus(cpu, err, va, RV_AR);
       if ((rv_if3(i) & 3) == 3)
-        return rv_except(cpu, RV_EILL, io);
+        return rv_trap(cpu, RV_EILL, tval); /* ld instruction not supported */
       if (sx)
         v = rv_signext(v, (w * 8 - 1));
       rv_sr(cpu, rv_ird(i), v);
@@ -462,10 +463,10 @@ rv_u32 rv_step(rv *cpu) {
       rv_u32 va /* virtual address */ = rv_lr(cpu, rv_irs1(i)) + rv_iimm_s(i);
       rv_u32 w /* value width */ = 1 << (rv_if3(i) & 3);
       rv_u32 y /* stored value */ = rv_lr(cpu, rv_irs2(i));
-      if (rv_if3(i) > 2)
-        return rv_except(cpu, RV_EILL, io);
+      if (rv_if3(i) > 2)                    /*I sb, sh, sw */
+        return rv_trap(cpu, RV_EILL, tval); /* sd instruction not supported */
       if ((err = rv_bus(cpu, &va, (rv_u8 *)&y, w, RV_AW)))
-        return rv_except(cpu, err == RV_BAD ? RV_ESFAULT : RV_ESPAGE, va);
+        return rv_trap_bus(cpu, err, va, RV_AW);
     } else if (rv_ioph(i) == 3) { /*Q 11/000: BRANCH */
       rv_u32 a = rv_lr(cpu, rv_irs1(i)), b = rv_lr(cpu, rv_irs2(i));
       rv_u32 y /* comparison value */ = a - b;
@@ -480,50 +481,48 @@ rv_u32 rv_step(rv *cpu) {
       ) {
         cpu->next_pc = targ; /* take branch */
       } else if (rv_if3(i) == 2 || rv_if3(i) == 3)
-        return rv_except(cpu, RV_EILL, io);
-      /* default: don't take branch */
+        return rv_trap(cpu, RV_EILL, tval);
+      /* default: don't take branch [fall through here] */
     } else
-      return rv_except(cpu, RV_EILL, io);
+      return rv_trap(cpu, RV_EILL, tval);
   } else if (rv_iopl(i) == 1) {
     if (rv_ioph(i) == 3 && rv_if3(i) == 0) { /*Q 11/001: JALR */
       rv_u32 target = (rv_lr(cpu, rv_irs1(i)) + rv_iimm_i(i)); /*I jalr */
       rv_sr(cpu, rv_ird(i), cpu->next_pc);
-      cpu->next_pc = target & (~(rv_u32)1); /* target is two-byte aligned */
+      cpu->next_pc = target & ~1U; /* target is two-byte aligned */
     } else
-      return rv_except(cpu, RV_EILL, io);
+      return rv_trap(cpu, RV_EILL, tval);
   } else if (rv_iopl(i) == 3) {
     if (rv_ioph(i) == 0) {            /*Q 00/011: MISC-MEM */
       if (rv_if3(i) == 0) {           /*I fence */
         rv_u32 fm = rv_bf(i, 31, 28); /* extract fm field */
         if (fm && fm != 8)
-          return rv_except(cpu, RV_EILL, io);
+          return rv_trap(cpu, RV_EILL, tval);
       } else if (rv_if3(i) == 1) { /*I fence.i */
       } else
-        return rv_except(cpu, RV_EILL, io);
-    }
-#ifdef RVA
-    else if (rv_ioph(i) == 1) { /*Q 01/011: AMO */
+        return rv_trap(cpu, RV_EILL, tval);
+    } else if (rv_ioph(i) == 1) { /*Q 01/011: AMO */
       rv_u32 va /* address */ = rv_lr(cpu, rv_irs1(i));
       rv_u32 b /* argument */ = rv_lr(cpu, rv_irs2(i));
       rv_u32 x /* loaded value */ = 0, y /* stored value */;
       if (rv_bf(i, 14, 12) != 2) { /* width must be 2 */
-        return rv_except(cpu, RV_EILL, io);
+        return rv_trap(cpu, RV_EILL, tval);
       } else if (va & 3) {
-        return rv_except(cpu, RV_ESALIGN, va); /* misaligned atomic :( */
-      } else if (rv_if5(i) == 2 && !b) {       /*I lr.w */
+        return rv_trap(cpu, RV_ESALIGN, va); /* misaligned atomic :( */
+      } else if (rv_if5(i) == 2 && !b) {     /*I lr.w */
         if ((err = rv_bus(cpu, &va, (rv_u8 *)&x, 4, RV_AR)))
-          return rv_except(cpu, err == RV_BAD ? RV_ELFAULT : RV_ELPAGE, va);
+          return rv_trap_bus(cpu, err, va, RV_AR);
         cpu->reserve = va, cpu->reserve_valid = 1;
       } else if (rv_if5(i) == 3) { /*I sc.w */
         if (cpu->reserve_valid && cpu->reserve_valid-- && cpu->reserve == va) {
           rv_sr(cpu, rv_ird(i), 0);
           if ((err = rv_bus(cpu, &va, (rv_u8 *)&b, 4, RV_AW)))
-            return rv_except(cpu, err == RV_BAD ? RV_ESFAULT : RV_ESPAGE, va);
+            return rv_trap_bus(cpu, err, va, RV_AW);
         } else
           x = 1;
       } else {
         if ((err = rv_bus(cpu, &va, (rv_u8 *)&x, 4, RV_AR)))
-          return rv_except(cpu, err == RV_BAD ? RV_ELFAULT : RV_ELPAGE, va);
+          return rv_trap_bus(cpu, err, va, RV_AR);
         if (rv_if5(i) == 0) /*I amoadd.w */
           y = x + b;
         else if (rv_if5(i) == 1) /*I amoswap.w */
@@ -543,18 +542,16 @@ rv_u32 rv_step(rv *cpu) {
         else if (rv_if5(i) == 28) /*I amomaxu.w */
           y = (x - b) <= x ? x : b;
         else
-          return rv_except(cpu, RV_EILL, io);
+          return rv_trap(cpu, RV_EILL, tval);
         if ((err = rv_bus(cpu, &va, (rv_u8 *)&y, 4, RV_AW)))
-          return rv_except(cpu, err == RV_BAD ? RV_ESFAULT : RV_ESPAGE, va);
+          return rv_trap_bus(cpu, err, va, RV_AW);
       }
       rv_sr(cpu, rv_ird(i), x);
-    }
-#endif
-    else if (rv_ioph(i) == 3) {            /*Q 11/011: JAL */
+    } else if (rv_ioph(i) == 3) {          /*Q 11/011: JAL */
       rv_sr(cpu, rv_ird(i), cpu->next_pc); /*I jal */
       cpu->next_pc = cpu->pc + rv_iimm_j(i);
     } else
-      return rv_except(cpu, RV_EILL, io);
+      return rv_trap(cpu, RV_EILL, tval);
   } else if (rv_iopl(i) == 4) { /* ALU section */
     if (rv_ioph(i) == 0 ||      /*Q 00/100: OP-IMM */
         rv_ioph(i) == 1) {      /*Q 01/100: OP */
@@ -562,14 +559,12 @@ rv_u32 rv_step(rv *cpu) {
              b = rv_ioph(i) ? rv_lr(cpu, rv_irs2(i)) : rv_iimm_i(i),
              s /* alt. ALU op */ = (rv_ioph(i) || rv_if3(i)) ? rv_b(i, 30) : 0,
              y /* result */, sh /* shift amount */ = b & 0x1F;
-#if RVM
       if (!rv_ioph(i) || !rv_b(i, 25)) {
-#endif
         if (rv_if3(i) == 0)      /*I add, addi, sub */
           y = s ? a - b : a + b; /* subtract if alt. op, otherwise add */
         else if ((rv_if3(i) == 5 || rv_if3(i) == 1) && b >> 5 & 0x5F &&
                  !rv_ioph(i))
-          return rv_except(cpu, RV_EILL, io); /* shift too big! */
+          return rv_trap(cpu, RV_EILL, tval); /* shift too big! */
         else if (rv_if3(i) == 1)              /*I sll, slli */
           y = a << sh;
         else if (rv_if3(i) == 2) /*I slt, slti */
@@ -584,7 +579,6 @@ rv_u32 rv_step(rv *cpu) {
           y = a | b;
         else /*I and, andi */
           y = a & b;
-#if RVM
       } else {
         rv_u32 as /* sgn(a) */ = 0, bs /* sgn(b) */ = 0, ylo, yhi /* result */;
         if (rv_if3(i) < 4) {              /*I mul, mulh, mulhsu, mulhu */
@@ -610,32 +604,31 @@ rv_u32 rv_step(rv *cpu) {
             y = a % b;
         }
       }
-#endif
       rv_sr(cpu, rv_ird(i), y);   /* set register to ALU output */
     } else if (rv_ioph(i) == 3) { /*Q 11/100: SYSTEM */
       rv_u32 csr /* CSR number */ = rv_iimm_iu(i), y /* result */;
       rv_u32 s /* uimm */ = rv_if3(i) & 4 ? rv_irs1(i) : rv_lr(cpu, rv_irs1(i));
-      if ((rv_if3(i) & 3) == 1) {    /*I csrrw, csrrwi */
-        if (rv_irs1(i)) {            /* perform CSR load */
-          if (rv_lcsr(cpu, csr, &y)) /* load CSR into y */
-            return rv_except(cpu, RV_EILL, io);
+      if ((rv_if3(i) & 3) == 1) {          /*I csrrw, csrrwi */
+        if (rv_irs1(i)) {                  /* perform CSR load */
+          if (rv_csr_bus(cpu, csr, 0, &y)) /* load CSR into y */
+            return rv_trap(cpu, RV_EILL, tval);
           if (rv_ird(i))
             rv_sr(cpu, rv_ird(i), y); /* store y into rd */
         }
-        if (rv_scsr(cpu, csr, s, &y)) /* set CSR to s [y unused] */
-          return rv_except(cpu, RV_EILL, io);
+        if (rv_csr_bus(cpu, csr, 1, &s)) /* set CSR to s [y unused] */
+          return rv_trap(cpu, RV_EILL, tval);
       } else if ((rv_if3(i) & 3) == 2) { /*I csrrs, csrrsi */
-        if (rv_lcsr(cpu, csr, &y))       /* load CSR into y */
-          return rv_except(cpu, RV_EILL, io);
-        rv_sr(cpu, rv_ird(i), y);                       /* store y into rd  */
-        if (rv_irs1(i) && rv_scsr(cpu, csr, y | s, &y)) /*     s|y into CSR */
-          return rv_except(cpu, RV_EILL, io);
+        if (rv_csr_bus(cpu, csr, 0, &y)) /* load CSR into y */
+          return rv_trap(cpu, RV_EILL, tval);
+        rv_sr(cpu, rv_ird(i), y), y |= s;              /* store y into rd  */
+        if (rv_irs1(i) && rv_csr_bus(cpu, csr, 1, &y)) /*     s|y into CSR */
+          return rv_trap(cpu, RV_EILL, tval);
       } else if ((rv_if3(i) & 3) == 3) { /*I csrrc, csrrci */
-        if (rv_lcsr(cpu, csr, &y))       /* load CSR into y */
-          return rv_except(cpu, RV_EILL, io);
-        rv_sr(cpu, rv_ird(i), y);                        /* store y into rd  */
-        if (rv_irs1(i) && rv_scsr(cpu, csr, y & ~s, &y)) /*    ~s&y into CSR */
-          return rv_except(cpu, RV_EILL, io);
+        if (rv_csr_bus(cpu, csr, 0, &y)) /* load CSR into y */
+          return rv_trap(cpu, RV_EILL, tval);
+        rv_sr(cpu, rv_ird(i), y), y &= ~s;             /* store y into rd  */
+        if (rv_irs1(i) && rv_csr_bus(cpu, csr, 1, &y)) /*    ~s&y into CSR */
+          return rv_trap(cpu, RV_EILL, tval);
       } else if (!rv_if3(i)) {
         if (!rv_ird(i)) {
           if (!rv_irs1(i) && rv_irs2(i) == 2 &&
@@ -645,7 +638,7 @@ rv_u32 rv_step(rv *cpu) {
                    pie /* xpie bit */ = rv_b(cpu->csr.mstatus, 4 + xp),
                    mprv = rv_b(cpu->csr.mstatus, 17);
             if (rv_b(cpu->csr.mstatus, 22) && xp == RV_PSUPER)
-              return rv_except(cpu, RV_EILL, io); /* exception if tsr=1 */
+              return rv_trap(cpu, RV_EILL, tval); /* exception if tsr=1 */
             mprv *= yp == RV_PMACH;               /* if y != m, mprv' = 0 */
             cpu->csr.mstatus &=
                 xp == RV_PMACH ? 0xFFFDE777
@@ -658,29 +651,29 @@ rv_u32 rv_step(rv *cpu) {
           } else if (rv_irs2(i) == 5 && rv_if7(i) == 8) { /*I wfi */
           } else if (rv_if7(i) == 9) {                    /*I sfence.vma */
             if (cpu->priv == RV_PSUPER && (cpu->csr.mstatus & (1 << 20)))
-              return rv_except(cpu, RV_EILL, io);
+              return rv_trap(cpu, RV_EILL, tval);
             cpu->tlb_valid = 0;
           } else if (!rv_irs1(i) && !rv_irs2(i) && !rv_if7(i)) { /*I ecall */
-            return rv_except(cpu, RV_EUECALL + cpu->priv, cpu->pc);
+            return rv_trap(cpu, RV_EUECALL + cpu->priv, cpu->pc);
           } else if (!rv_irs1(i) && rv_irs2(i) == 1 && !rv_if7(i)) {
-            return rv_except(cpu, RV_EBP, cpu->pc); /*I ebreak */
+            return rv_trap(cpu, RV_EBP, cpu->pc); /*I ebreak */
           } else
-            return rv_except(cpu, RV_EILL, io);
+            return rv_trap(cpu, RV_EILL, tval);
         } else
-          return rv_except(cpu, RV_EILL, io);
+          return rv_trap(cpu, RV_EILL, tval);
       } else
-        return rv_except(cpu, RV_EILL, io);
+        return rv_trap(cpu, RV_EILL, tval);
     } else
-      return rv_except(cpu, RV_EILL, io);
+      return rv_trap(cpu, RV_EILL, tval);
   } else if (rv_iopl(i) == 5) {
     if (rv_ioph(i) == 0) {                           /*Q 00/101: AUIPC */
       rv_sr(cpu, rv_ird(i), rv_iimm_u(i) + cpu->pc); /*I auipc */
     } else if (rv_ioph(i) == 1) {                    /*Q 01/101: LUI */
       rv_sr(cpu, rv_ird(i), rv_iimm_u(i));           /*I lui */
     } else
-      return rv_except(cpu, RV_EILL, io);
+      return rv_trap(cpu, RV_EILL, tval);
   } else
-    return rv_except(cpu, RV_EILL, io);
+    return rv_trap(cpu, RV_EILL, tval);
   cpu->pc = cpu->next_pc;
   if (cpu->csr.mip) { /* lil' bit of prematch optimizashe */
     rv_u32 iidx /* interrupt number */, d /* delegated privilege */;
@@ -689,7 +682,7 @@ rv_u32 rv_step(rv *cpu) {
         continue;
       d = (cpu->csr.mideleg & (1 << iidx)) ? RV_PSUPER : RV_PMACH;
       if (d == cpu->priv ? rv_b(cpu->csr.mstatus, d) : (d > cpu->priv))
-        return rv_except(cpu, 0x80000000U + iidx, cpu->pc);
+        return rv_trap(cpu, 0x80000000U + iidx, cpu->pc);
     }
   }
   return 0x80000000; /* reserved code -- no exception */

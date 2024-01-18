@@ -12,12 +12,13 @@ test: vectors run_test
 vectors:
 	mkdir -p vectors
 	cp $(RISCV_TESTS)/isa/rv32ui-p-* vectors
+	cp $(RISCV_TESTS)/isa/rv32si-p-* vectors
+	cp $(RISCV_TESTS)/isa/rv32mi-p-* vectors
 	cp $(RISCV_TESTS)/isa/rv32uc-p-* vectors
 	cp $(RISCV_TESTS)/isa/rv32um-p-* vectors
 	cp $(RISCV_TESTS)/isa/rv32ua-p-* vectors
-	cp $(RISCV_TESTS)/isa/rv32si-p-* vectors
-	cp $(RISCV_TESTS)/isa/rv32mi-p-* vectors
 	rm -rf vectors/rv32mi-p-breakpoint # breakpoints not supported
+	rm -rf vectors/rv32ui-p-ma_data    # misaligned loads/stores not supported
 	rm -rf vectors/*.dump
 	find vectors -not -path vectors -name '*' ! -name '*.dmp' -exec bash -c "$(RVOD) -D -M no-aliases -M numeric '{}' > '{}.dmp'" \;
 	find vectors -not -path vectors -name '*' ! -name '*.dmp' -exec bash -c "$(RVOC) -O binary '{}' '{}'" \;

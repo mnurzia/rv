@@ -33,7 +33,8 @@ void dump_cpu(rv *r) {
       printf("x%02d: %08X%s", i + j * 8, r->r[i + j * 8], j == 3 ? "\n" : "  ");
   printf("mstatus: %08X  mcause:  %08X  mtvec:   %08X\n", r->csr.mstatus,
          r->csr.mcause, r->csr.mtvec);
-  printf("mip:     %08X  mie:     %08X\n", r->csr.mip, r->csr.mie);
+  printf("mip:     %08X  mie:     %08X  mtval:   %08X\n", r->csr.mip,
+         r->csr.mie, r->csr.mtval);
   printf("priv:    %8X\n", r->priv);
 }
 
@@ -58,7 +59,6 @@ int main(int argc, const char **argv) {
   rv_init(&cpu, NULL, &bus_cb);
   while (1 && (!limit || ninstr++ < limit)) {
     rv_u32 v = rv_step(&cpu);
-    printf("%04lu %08X\n", ninstr, cpu.pc);
     if ((v == RV_EUECALL || v == RV_ESECALL || v == RV_EMECALL) &&
         (cpu.r[3] == 1 && cpu.r[10] == 0))
       return EXIT_SUCCESS;

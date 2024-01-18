@@ -4,15 +4,6 @@
 
 #define RV_VERSION "1.0.0"
 
-/* Set to 1 for extremely fine-grained debug output. */
-/*#define RV_VERBOSE 0*/
-
-/* Enabled extensions. */
-#define RVA 1 /* Atomics */
-#define RVC 1 /* Compressed Instructions */
-#define RVM 1 /* Multiplication and Division */
-#define RVS 1 /* Supervisor */
-
 /* Exception list. */
 #define RV_EIALIGN 0  /* Instruction alignment exception. */
 #define RV_EIFAULT 1  /* Instruction fault exception. */
@@ -59,8 +50,8 @@ typedef rv_u32 rv_res;
 
 #define RV_OK 0
 #define RV_BAD 1
-#define RV_PAGEFAULT 2
-#define RV_BAD_ALIGN 3
+#define RV_BAD_ALIGN 2
+#define RV_PAGEFAULT 3
 
 typedef struct rv_csr {
   rv_u32 /* sstatus, */ sie, stvec, scounteren, sscratch, sepc, scause, stval,
@@ -83,14 +74,12 @@ typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data,
 typedef struct rv {
   rv_bus_cb bus_cb;
   void *user;
-  rv_u32 r[32];   /* registers */
-  rv_u32 pc;      /* program counter */
-  rv_u32 next_pc; /* program counter for next cycle */
-  rv_csr csr;     /* csr state */
-  rv_u32 priv;    /* current privilege level*/
-#if RVA
-  rv_u32 reserve, reserve_valid;
-#endif
+  rv_u32 r[32];                  /* registers */
+  rv_u32 pc;                     /* program counter */
+  rv_u32 next_pc;                /* program counter for next cycle */
+  rv_csr csr;                    /* csr state */
+  rv_u32 priv;                   /* current privilege level*/
+  rv_u32 reserve, reserve_valid; /* lr/sc reservation set */
   rv_u32 tlb_va, tlb_pte, tlb_valid, tlb_i;
 } rv;
 

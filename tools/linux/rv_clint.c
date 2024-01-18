@@ -9,27 +9,22 @@ void rv_clint_init(rv_clint *clint, rv *cpu) {
 
 rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u8 *d, rv_u32 store,
                     rv_u32 size) {
-  rv_u32 *reg = NULL, *data = (rv_u32 *)d;
+  rv_u32 *reg, *data = (rv_u32 *)d;
   if (size != 4)
     return RV_BAD;
-  if (addr == 0x0)
+  if (addr == 0x0) /*R mswi */
     reg = &clint->mswi;
-  else if (addr == 0x4000 + 0x7FF8)
-    reg = &clint->cpu->csr.mtime;
-  else if (addr == 0x4000 + 0x7FF8 + 4)
-    reg = &clint->cpu->csr.mtimeh;
-  else if (addr == 0x4000 + 0x0000)
+  else if (addr == 0x4000 + 0x0000) /*R mtimecmp */
     reg = &clint->mtimecmp;
-  else if (addr == 0x4000 + 0x0000 + 4)
+  else if (addr == 0x4000 + 0x0000 + 4) /*R mtimecmph */
     reg = &clint->mtimecmph;
+  else if (addr == 0x4000 + 0x7FF8) /*R mtime */
+    reg = &clint->cpu->csr.mtime;
+  else if (addr == 0x4000 + 0x7FF8 + 4) /*R mtimeh */
+    reg = &clint->cpu->csr.mtimeh;
   else
     return RV_BAD;
-  if (reg) {
-    if (store) {
-      *reg = *data;
-    } else
-      *data = *reg;
-  }
+  memcpy(store ? reg : data, store ? data : reg, 4);
   return RV_OK;
 }
 
