@@ -52,6 +52,8 @@ typedef rv_u32 rv_res;
 #define RV_BAD 1
 #define RV_BAD_ALIGN 2
 #define RV_PAGEFAULT 3
+#define RV_TRAP_NONE 0x80000010
+#define RV_TRAP_WFI 0x80000011
 
 typedef struct rv_csr {
   rv_u32 /* sstatus, */ sie, stvec, scounteren, sscratch, sepc, scause, stval,
@@ -86,7 +88,7 @@ typedef struct rv {
 /* Initialize CPU. You can call this again on `cpu` to reset it. */
 void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 
-/* Single-step CPU. */
+/* Single-step CPU. Returns trap cause if trap occurred, else RV_TRAP_NONE */
 rv_u32 rv_step(rv *cpu);
 
 /* Trigger interrupt(s). */

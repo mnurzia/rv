@@ -64,9 +64,9 @@ static rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; }
 /* store register */
 static void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) { cpu->r[i] = i ? v : 0; }
 
-/* csr bus access */
+/* csr bus access -- we model csrs as an internal memory bus */
 static rv_res rv_csr_bus(rv *cpu, rv_u32 csr, rv_u32 w, rv_u32 *io) {
-  rv_u32 *y /* the register */, wmask = (rv_u32)-1, rmask = wmask;
+  rv_u32 *y /* the register */, wmask /* writable bits */ = -1U, rmask = -1U;
   rv_u32 rw = rv_bf(csr, 11, 10), priv = rv_bf(csr, 9, 8);
   if ((w && rw == 3) || cpu->priv < priv ||
       (csr == 0x180 && cpu->priv == RV_PSUPER && rv_b(cpu->csr.mstatus, 20)))
@@ -139,8 +139,8 @@ static rv_res rv_csr_bus(rv *cpu, rv_u32 csr, rv_u32 w, rv_u32 *io) {
     y = &cpu->csr.mhartid;
   } else
     return RV_BAD;
-  *io = w ? *io : (*y & rmask);
-  *y = w ? (*y & ~wmask) | (*io & wmask) : *y; /* write relevant bits to p */
+  *io = w ? *io : (*y & rmask);                /* only read allowed bits */
+  *y = w ? (*y & ~wmask) | (*io & wmask) : *y; /* only write allowed bits  */
   return RV_OK;
 }
 
@@ -174,11 +174,10 @@ static rv_u32 rv_trap(rv *cpu, rv_u32 cause, rv_u32 tval) {
 
 /* bus access trap with tval */
 static rv_u32 rv_trap_bus(rv *cpu, rv_u32 err, rv_u32 tval, rv_access a) {
-  static const rv_u32 except[] = {RV_EIFAULT, RV_EIALIGN, RV_EIPAGE,
-                                  RV_ELFAULT, RV_ELALIGN, RV_ELPAGE,
-                                  RV_ESFAULT, RV_ESALIGN, RV_ESPAGE};
-  rv_u32 i = a == RV_AR ? 1 : a == RV_AW ? 2 : 0;
-  return rv_trap(cpu, except[i * 3 + err - 1], tval);
+  static const rv_u32 ex[] = {RV_EIFAULT, RV_EIALIGN, RV_EIPAGE,  /* RV_AR */
+                              RV_ELFAULT, RV_ELALIGN, RV_ELPAGE,  /* RV_AW */
+                              RV_ESFAULT, RV_ESALIGN, RV_ESPAGE}; /* RV_AX */
+  return rv_trap(cpu, ex[(a == RV_AW ? 2 : a == RV_AR) * 3 + err - 1], tval);
 }
 
 /* sv32 virtual address -> physical address */
@@ -439,6 +438,19 @@ error:
   return err;
 }
 
+/* service interrupts */
+rv_u32 rv_service(rv *cpu) {
+  rv_u32 iidx /* interrupt number */, d /* delegated privilege */;
+  for (iidx = 12; iidx > 0; iidx--) {
+    if (!(cpu->csr.mip & cpu->csr.mie & (1 << iidx)))
+      continue;
+    d = (cpu->csr.mideleg & (1 << iidx)) ? RV_PSUPER : RV_PMACH;
+    if (d == cpu->priv ? rv_b(cpu->csr.mstatus, d) : (d > cpu->priv))
+      return rv_trap(cpu, 0x80000000U + iidx, cpu->pc);
+  }
+  return RV_TRAP_NONE;
+}
+
 /* single step */
 rv_u32 rv_step(rv *cpu) {
   rv_u32 i, tval, err = rv_if(cpu, &i, &tval); /* fetch instruction into i */
@@ -615,7 +627,7 @@ rv_u32 rv_step(rv *cpu) {
           if (rv_ird(i))
             rv_sr(cpu, rv_ird(i), y); /* store y into rd */
         }
-        if (rv_csr_bus(cpu, csr, 1, &s)) /* set CSR to s [y unused] */
+        if (rv_csr_bus(cpu, csr, 1, &s)) /* set CSR to s */
           return rv_trap(cpu, RV_EILL, tval);
       } else if ((rv_if3(i) & 3) == 2) { /*I csrrs, csrrsi */
         if (rv_csr_bus(cpu, csr, 0, &y)) /* load CSR into y */
@@ -634,22 +646,25 @@ rv_u32 rv_step(rv *cpu) {
           if (!rv_irs1(i) && rv_irs2(i) == 2 &&
               (rv_if7(i) == 8 || rv_if7(i) == 24)) { /*I mret, sret */
             rv_u32 xp /* instruction privilege */ = rv_if7(i) >> 3;
-            rv_u32 yp = cpu->csr.mstatus >> (xp == RV_PMACH ? 11 : 8) & xp,
-                   pie /* xpie bit */ = rv_b(cpu->csr.mstatus, 4 + xp),
-                   mprv = rv_b(cpu->csr.mstatus, 17);
+            rv_u32 yp /* previous (incoming) privilege [either mpp or spp] */ =
+                cpu->csr.mstatus >> (xp == RV_PMACH ? 11 : 8) & xp;
+            rv_u32 xpie /* previous ie bit */ = rv_b(cpu->csr.mstatus, 4 + xp);
+            rv_u32 mprv /* modify privilege */ = rv_b(cpu->csr.mstatus, 17);
             if (rv_b(cpu->csr.mstatus, 22) && xp == RV_PSUPER)
               return rv_trap(cpu, RV_EILL, tval); /* exception if tsr=1 */
             mprv *= yp == RV_PMACH;               /* if y != m, mprv' = 0 */
             cpu->csr.mstatus &=
-                xp == RV_PMACH ? 0xFFFDE777
-                               : 0x807DFEC9; /* {xpp, xie, xpie, mprv} <- 0 */
-            cpu->csr.mstatus |= pie << xp    /* xie <- xpie */
+                xp == RV_PMACH ? 0xFFFDE777  /* {mpp, mie, mpie, mprv} <- 0 */
+                               : 0xFFFDFEDD; /* {spp, sie, spie, mprv} <- 0 */
+            cpu->csr.mstatus |= xpie << xp   /* xie <- xpie */
                                 | 1 << (4 + xp) /* xpie <- 1 */
                                 | mprv << 17;   /* mprv <- mprv' */
             cpu->priv = yp;                     /* priv <- y */
             cpu->next_pc = xp == RV_PMACH ? cpu->csr.mepc : cpu->csr.sepc;
           } else if (rv_irs2(i) == 5 && rv_if7(i) == 8) { /*I wfi */
-          } else if (rv_if7(i) == 9) {                    /*I sfence.vma */
+            cpu->pc = cpu->next_pc;
+            return (err = rv_service(cpu)) == RV_TRAP_NONE ? RV_TRAP_WFI : err;
+          } else if (rv_if7(i) == 9) { /*I sfence.vma */
             if (cpu->priv == RV_PSUPER && (cpu->csr.mstatus & (1 << 20)))
               return rv_trap(cpu, RV_EILL, tval);
             cpu->tlb_valid = 0;
@@ -675,17 +690,9 @@ rv_u32 rv_step(rv *cpu) {
   } else
     return rv_trap(cpu, RV_EILL, tval);
   cpu->pc = cpu->next_pc;
-  if (cpu->csr.mip) { /* lil' bit of prematch optimizashe */
-    rv_u32 iidx /* interrupt number */, d /* delegated privilege */;
-    for (iidx = 12; iidx > 0; iidx--) {
-      if (!(cpu->csr.mip & cpu->csr.mie & (1 << iidx)))
-        continue;
-      d = (cpu->csr.mideleg & (1 << iidx)) ? RV_PSUPER : RV_PMACH;
-      if (d == cpu->priv ? rv_b(cpu->csr.mstatus, d) : (d > cpu->priv))
-        return rv_trap(cpu, 0x80000000U + iidx, cpu->pc);
-    }
-  }
-  return 0x80000000; /* reserved code -- no exception */
+  if (cpu->csr.mip && (err = rv_service(cpu)) != RV_TRAP_NONE)
+    return err;
+  return RV_TRAP_NONE; /* reserved code -- no exception */
 }
 
 void rv_irq(rv *cpu, rv_cause cause) {
