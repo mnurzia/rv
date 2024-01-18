@@ -76,12 +76,12 @@ typedef rv_res (*rv_bus_cb)(void *user, rv_u32 addr, rv_u8 *data,
 typedef struct rv {
   rv_bus_cb bus_cb;
   void *user;
-  rv_u32 r[32];                  /* registers */
-  rv_u32 pc;                     /* program counter */
-  rv_u32 next_pc;                /* program counter for next cycle */
-  rv_csr csr;                    /* csr state */
-  rv_u32 priv;                   /* current privilege level*/
-  rv_u32 reserve, reserve_valid; /* lr/sc reservation set */
+  rv_u32 r[32];          /* registers */
+  rv_u32 pc;             /* program counter */
+  rv_u32 next_pc;        /* program counter for next cycle */
+  rv_csr csr;            /* csr state */
+  rv_u32 priv;           /* current privilege level*/
+  rv_u32 res, res_valid; /* lr/sc reservation set */
   rv_u32 tlb_va, tlb_pte, tlb_valid, tlb_i;
 } rv;
 

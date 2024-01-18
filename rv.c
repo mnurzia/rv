@@ -155,14 +155,14 @@ static rv_u32 rv_trap(rv *cpu, rv_u32 cause, rv_u32 tval) {
           : RV_PMACH;
   rv_u32 *xtvec = &cpu->csr.mtvec, *xepc = &cpu->csr.mepc,
          *xcause = &cpu->csr.mcause, *xtval = &cpu->csr.mtval;
-  rv_u32 ie /* xie */ = rv_b(cpu->csr.mstatus, xp);
+  rv_u32 xie = rv_b(cpu->csr.mstatus, xp);
   if (xp == RV_PSUPER) /* select s-mode regs */
     xtvec = &cpu->csr.stvec, xepc = &cpu->csr.sepc, xcause = &cpu->csr.scause,
     xtval = &cpu->csr.stval;
-  cpu->csr.mstatus &=
-      (xp == RV_PMACH ? 0xFFFFE777 : 0x807FFEC9); /* {xpp, xie, xpie} <- 0 */
+  cpu->csr.mstatus &= (xp == RV_PMACH ? 0xFFFFE777   /* {mpp, mie, mpie} <- 0 */
+                                      : 0xFFFFFEDD); /* {spp, sie, spie} <- 0 */
   cpu->csr.mstatus |= (cpu->priv << (xp == RV_PMACH ? 11 : 8)) /* xpp <- y */
-                      | ie << (4 + xp);                        /* xpie <- xie */
+                      | xie << (4 + xp);                       /* xpie <- xie */
   *xepc = cpu->pc;                                             /* xepc <- pc */
   *xcause = rcause | (is_interrupt << 31); /* xcause <- cause */
   *xtval = tval;                           /* xtval <- tval */
@@ -209,19 +209,17 @@ static rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
     }
     if (!tlb_hit)
       cpu->tlb_va = va & ~0xFFFU, cpu->tlb_pte = pte, cpu->tlb_i = i,
-      cpu->tlb_valid = 1;
-    if (!rv_b(pte, 4) && epriv == RV_PUSER)
-      return RV_PAGEFAULT; /* u-bit not set */
-    if (epriv == RV_PSUPER && !rv_b(cpu->csr.mstatus, 18) && rv_b(pte, 4))
-      return RV_PAGEFAULT; /* mstatus.sum bit wrong */
+      cpu->tlb_valid = 1; /* avoid another pte walk on the next access */
     if (rv_b(cpu->csr.mstatus, 19))
-      pte |= rv_b(pte, 3) << 2; /* pte.r = pte.x if MXR bit set */
-    if (~rv_bf(pte, 3, 1) & access)
-      return RV_PAGEFAULT; /* mismatching access type (an actual fault) */
-    if (i && rv_bf(pte, 19, 10))
-      return RV_PAGEFAULT; /* misaligned megapage */
-    if (!rv_b(pte, 6) || ((access & RV_AW) && !rv_b(pte, 7)))
-      return RV_PAGEFAULT; /* pte.a == 0, or we are writing and pte.d == 0 */
+      pte |= rv_b(pte, 3) << 2;              /* pte.r = pte.x if mxr bit set */
+    if ((!rv_b(pte, 4) && epriv == RV_PUSER) /* u-bit not set */
+        || (epriv == RV_PSUPER && !rv_b(cpu->csr.mstatus, 18) &&
+            rv_b(pte, 4))                       /* mstatus.sum bit wrong */
+        || ~rv_bf(pte, 3, 1) & access           /* mismatching access type*/
+        || (i && rv_bf(pte, 19, 10))            /* misaligned megapage */
+        || !rv_b(pte, 6)                        /* pte.a == 0 */
+        || ((access & RV_AW) && !rv_b(pte, 7))) /* writing and pte.d == 0 */
+      return RV_PAGEFAULT;
     /* pa.ppn[1:i] = pte.ppn[1:i] */
     *pa = rv_tbf(pte, 31, 10 + 10 * i, 12 + 10 * i) | rv_bf(va, 11 + 10 * i, 0);
   }
@@ -289,7 +287,7 @@ static rv_u32 rvm(rv_u32 a, rv_u32 b, rv_u32 *hi) {
 #define rvc_imm_css(c) /* CSS imm. for c.swsp */                               \
   (rv_tbf(c, 8, 7, 6) | rv_tbf(c, 12, 9, 2))
 
-/* macros to make all uncompressed instruction types */
+/* macros to assemble all uncompressed instruction types */
 #define rv_i_i(op, f3, rd, rs1, imm) /* I-type */                              \
   ((imm) << 20 | (rs1) << 15 | (f3) << 12 | (rd) << 7 | (op) << 2 | 3)
 #define rv_i_s(op, f3, rs1, rs2, imm) /* S-type */                             \
@@ -439,7 +437,7 @@ error:
 }
 
 /* service interrupts */
-rv_u32 rv_service(rv *cpu) {
+static rv_u32 rv_service(rv *cpu) {
   rv_u32 iidx /* interrupt number */, d /* delegated privilege */;
   for (iidx = 12; iidx > 0; iidx--) {
     if (!(cpu->csr.mip & cpu->csr.mie & (1 << iidx)))
@@ -516,29 +514,21 @@ rv_u32 rv_step(rv *cpu) {
     } else if (rv_ioph(i) == 1) { /*Q 01/011: AMO */
       rv_u32 va /* address */ = rv_lr(cpu, rv_irs1(i));
       rv_u32 b /* argument */ = rv_lr(cpu, rv_irs2(i));
-      rv_u32 x /* loaded value */ = 0, y /* stored value */;
+      rv_u32 x /* loaded value */ = 0, y /* stored value */ = b;
+      rv_u32 l /* should load? */ = rv_if5(i) != 3, s /* should store? */ = 1;
       if (rv_bf(i, 14, 12) != 2) { /* width must be 2 */
         return rv_trap(cpu, RV_EILL, tval);
-      } else if (va & 3) {
-        return rv_trap(cpu, RV_ESALIGN, va); /* misaligned atomic :( */
-      } else if (rv_if5(i) == 2 && !b) {     /*I lr.w */
-        if ((err = rv_bus(cpu, &va, (rv_u8 *)&x, 4, RV_AR)))
-          return rv_trap_bus(cpu, err, va, RV_AR);
-        cpu->reserve = va, cpu->reserve_valid = 1;
-      } else if (rv_if5(i) == 3) { /*I sc.w */
-        if (cpu->reserve_valid && cpu->reserve_valid-- && cpu->reserve == va) {
-          rv_sr(cpu, rv_ird(i), 0);
-          if ((err = rv_bus(cpu, &va, (rv_u8 *)&b, 4, RV_AW)))
-            return rv_trap_bus(cpu, err, va, RV_AW);
-        } else
-          x = 1;
       } else {
-        if ((err = rv_bus(cpu, &va, (rv_u8 *)&x, 4, RV_AR)))
+        if (l && (err = rv_bus(cpu, &va, (rv_u8 *)&x, 4, RV_AR)))
           return rv_trap_bus(cpu, err, va, RV_AR);
         if (rv_if5(i) == 0) /*I amoadd.w */
           y = x + b;
         else if (rv_if5(i) == 1) /*I amoswap.w */
           y = b;
+        else if (rv_if5(i) == 2 && !b) /*I lr.w */
+          cpu->res = va, cpu->res_valid = 1, s = 0;
+        else if (rv_if5(i) == 3) /*I sc.w */
+          x = !(cpu->res_valid && cpu->res_valid-- && cpu->res == va), s = !x;
         else if (rv_if5(i) == 4) /*I amoxor.w */
           y = x ^ b;
         else if (rv_if5(i) == 8) /*I amoor.w */
@@ -555,7 +545,7 @@ rv_u32 rv_step(rv *cpu) {
           y = (x - b) <= x ? x : b;
         else
           return rv_trap(cpu, RV_EILL, tval);
-        if ((err = rv_bus(cpu, &va, (rv_u8 *)&y, 4, RV_AW)))
+        if (s && (err = rv_bus(cpu, &va, (rv_u8 *)&y, 4, RV_AW)))
           return rv_trap_bus(cpu, err, va, RV_AW);
       }
       rv_sr(cpu, rv_ird(i), x);
@@ -595,15 +585,12 @@ rv_u32 rv_step(rv *cpu) {
         rv_u32 as /* sgn(a) */ = 0, bs /* sgn(b) */ = 0, ylo, yhi /* result */;
         if (rv_if3(i) < 4) {              /*I mul, mulh, mulhsu, mulhu */
           if (rv_if3(i) < 3 && rv_sgn(a)) /* a is signed iff f3 in {0, 1, 2} */
-            a = ~a + 1, as = 1;
+            a = ~a + 1, as = 1;           /* two's complement */
           if (rv_if3(i) < 2 && rv_sgn(b)) /* b is signed iff f3 in {0, 1} */
-            b = ~b + 1, bs = 1;
-          ylo = rvm(a, b, &yhi); /* perform multiply */
-          if (as ^ bs) {         /* invert output quantity if result <0 */
-            ylo = ~ylo + 1, yhi = ~yhi; /* two's complement */
-            if (!ylo)                   /* carry out of lo */
-              yhi++;                    /* propagate carry to hi */
-          }
+            b = ~b + 1, bs = 1;           /* two's complement */
+          ylo = rvm(a, b, &yhi);          /* perform multiply */
+          if (as != bs) /* invert output quantity if result <0 */
+            ylo = ~ylo + 1, yhi = ~yhi + !ylo; /* two's complement */
           y = rv_if3(i) ? yhi : ylo; /* return hi word if mulh, otherwise lo */
         } else {
           if (rv_if3(i) == 4) /*I div */
@@ -612,9 +599,9 @@ rv_u32 rv_step(rv *cpu) {
             y = b ? (a / b) : (rv_u32)(-1);
           else if (rv_if3(i) == 6) /*I rem */
             y = (rv_u32)((rv_s32)a % (rv_s32)b);
-          else /*I remu */
+          else /* if (rv_if3(i) == 8) */ /*I remu */
             y = a % b;
-        }
+        } /* all this because we don't have 64bits. worth it? probably not B) */
       }
       rv_sr(cpu, rv_ird(i), y);   /* set register to ALU output */
     } else if (rv_ioph(i) == 3) { /*Q 11/100: SYSTEM */
