@@ -6,8 +6,6 @@
 
 #include "rv.h"
 
-#define RV_PLIC_SIZE /* size of memory map */ 0x4000000
-
 #define RV_PLIC_NSRC 256
 #define RV_PLIC_NCTX 1
 
@@ -23,8 +21,10 @@ typedef struct rv_plic {
 /* initialize the PLIC */
 void rv_plic_init(rv_plic *plic);
 
+#define RV_PLIC_SIZE /* size of memory map */ 0x4000000
+
 /* perform a bus access on the plic */
-rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *data, rv_u32 store,
+rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *data, rv_u32 is_store,
                    rv_u32 width);
 
 /* request an interrupt with the given interrupt source */

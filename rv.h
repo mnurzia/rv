@@ -1,4 +1,5 @@
-/* RV32I[MAC] emulator. */
+/* RV32I[MAC] emulator.
+ * see: https://github.com/riscv/riscv-isa-manual */
 #ifndef MN_RV_H
 #define MN_RV_H
 

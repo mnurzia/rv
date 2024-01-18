@@ -6,8 +6,6 @@
 
 #include "rv.h"
 
-#define RV_CLINT_SIZE /* size of memory map */ 0x10000
-
 typedef struct rv_clint {
   rv *cpu;
   rv_u32 mswi, mtimecmp, mtimecmph;
@@ -16,8 +14,10 @@ typedef struct rv_clint {
 /* initialize the interruptor for a given cpu */
 void rv_clint_init(rv_clint *clint, rv *cpu);
 
+#define RV_CLINT_SIZE /* size of memory map */ 0x10000
+
 /* perform a bus access on the interruptor */
-rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u8 *data, rv_u32 store,
+rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u8 *data, rv_u32 is_store,
                     rv_u32 width);
 
 /* returns 1 if a machine software interrupt is occurring */

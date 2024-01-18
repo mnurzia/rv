@@ -27,9 +27,11 @@ typedef struct rv_uart {
 /* initialize a UART with a user-provided I/O callback */
 void rv_uart_init(rv_uart *uart, void *user, rv_uart_cb cb);
 
+#define RV_UART_SIZE /* size of memory map */ 0x20
+
 /* perform a bus access on the UART */
-rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u8 *data, rv_u32 str,
-                   rv_u32 size);
+rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u8 *data, rv_u32 is_store,
+                   rv_u32 width);
 
 /* update the UART */
 rv_u32 rv_uart_update(rv_uart *uart);

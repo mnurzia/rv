@@ -1,57 +1,28 @@
-#include <arpa/inet.h>
-#include <assert.h>
-#include <stdio.h>
+#include <curses.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/poll.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include "rv.h"
 #include "rv_clint.h"
 #include "rv_plic.h"
 #include "rv_uart.h"
 
-unsigned long ninstr = 0;
-rv_u32 gres = 0;
-
 #define MACH_RAM_BASE 0x80000000UL
-#define MACH_RAM_SIZE (1024UL * 1024UL * 128UL) /* 128MiB */
+#define MACH_RAM_SIZE (1024UL * 1024UL * 128UL) /* 128MiB of ram */
+#define MACH_DTB_OFFSET 0x2000000UL             /* dtb is @32MiB */
 
-#define MACH_PLIC_BASE 0xC000000UL
-#define MACH_PLIC_SIZE 0x400000UL
-
-#define MACH_CLINT_BASE 0x2000000UL
-#define MACH_CLINT_SIZE 0x10000UL
-
-#define MACH_UART_BASE 0x3000000UL
-#define MACH_UART_SIZE 0x100UL * 4
-
-#define MACH_UART2_BASE 0x6000000UL
-#define MACH_UART2_SIZE 0x100UL * 4
+#define MACH_PLIC_BASE 0xC000000UL  /* plic0 base address */
+#define MACH_CLINT_BASE 0x2000000UL /* clint0 base address */
+#define MACH_UART_BASE 0x3000000UL  /* uart0 base address */
+#define MACH_UART2_BASE 0x6000000UL /* uart1 base address */
 
 typedef struct mach {
   rv *cpu;
   rv_u8 *ram;
-  rv_u8 recv_buf;
-  int has_recv;
-  int gdb_socket;
   rv_plic plic;
   rv_clint clint;
   rv_uart uart, uart2;
 } mach;
-
-void stl(rv *cpu) {
-  printf("%lu pc %08X a0 %08X a1 %08X a2 %08X a3 %08X a4 %08X a7 %08X s0 %08X "
-         "s1 %08X "
-         "s2 %08X "
-         "ra %08X "
-         "sp %08X r %08X p%i\n",
-         ninstr, cpu->pc, cpu->r[10], cpu->r[11], cpu->r[12], cpu->r[13],
-         cpu->r[14], cpu->r[17], cpu->r[8], cpu->r[9], cpu->r[18], cpu->r[1],
-         cpu->r[2], gres, cpu->priv);
-}
 
 rv_res mach_bus(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
                 rv_u32 width) {
@@ -60,229 +31,90 @@ rv_res mach_bus(void *user, rv_u32 addr, rv_u8 *data, rv_u32 store,
     rv_u8 *ram = m->ram + addr - MACH_RAM_BASE;
     memcpy(store ? ram : data, store ? data : ram, width);
     return RV_OK;
-  } else if (addr >= MACH_PLIC_BASE && addr < MACH_PLIC_BASE + MACH_PLIC_SIZE) {
+  } else if (addr >= MACH_PLIC_BASE && addr < MACH_PLIC_BASE + RV_PLIC_SIZE) {
     return rv_plic_bus(&m->plic, addr - MACH_PLIC_BASE, data, store, width);
   } else if (addr >= MACH_CLINT_BASE &&
-             addr < MACH_CLINT_BASE + MACH_CLINT_SIZE) {
+             addr < MACH_CLINT_BASE + RV_CLINT_SIZE) {
     return rv_clint_bus(&m->clint, addr - MACH_CLINT_BASE, data, store, width);
-  } else if (addr >= MACH_UART_BASE && addr < MACH_UART_BASE + MACH_UART_SIZE) {
+  } else if (addr >= MACH_UART_BASE && addr < MACH_UART_BASE + RV_UART_SIZE) {
     return rv_uart_bus(&m->uart, addr - MACH_UART_BASE, data, store, width);
-  } else if (addr >= MACH_UART2_BASE &&
-             addr < MACH_UART2_BASE + MACH_UART2_SIZE) {
+  } else if (addr >= MACH_UART2_BASE && addr < MACH_UART2_BASE + RV_UART_SIZE) {
     return rv_uart_bus(&m->uart2, addr - MACH_UART2_BASE, data, store, width);
   } else {
     return RV_BAD;
   }
 }
 
-#define rv_bf(i, h, l)                                                         \
-  (((i) >> (l)) & ((1 << ((h) - (l) + 1)) - 1))    /* extract bit field */
-#define rv_b(i, l) rv_bf(i, l, l)                  /* extract bit */
-#define rv_tb(i, l, o) (rv_b(i, l) << (o))         /* translate bit */
-#define rv_tbf(i, h, l, o) (rv_bf(i, h, l) << (o)) /* translate bit field */
-
-void dump_pt(rv *cpu, rv_u32 base) {
-  rv_u32 satp = cpu->csr.satp;
-  rv_u32 pt_addr = base ? base : rv_tbf(satp, 21, 0, 12), pt2_addr;
-  rv_u32 i, j;
-  printf("Page table dump @ %08X:\n", pt_addr);
-  for (i = 0; i < (1 << 10); i++) {
-    rv_u32 pte, pte_addr = pt_addr + (i << 2);
-    rv_res res = cpu->bus_cb(cpu->user, pte_addr, (rv_u8 *)&pte, 0, 4);
-    rv_u32 phys_lo, phys_hi;
-    if (res) {
-      printf("%08X: fault\n", pte_addr);
-      continue;
-    }
-    if (!pte)
-      continue;
-    phys_lo = rv_bf(pte, 31, 20) << 22;
-    phys_hi = phys_lo + ((1 << 22) - 1);
-    printf("%08X: %08X [%08X-%08X]\n", (i << 22), pte, phys_lo, phys_hi);
-    if (i << 22 != 0x95400000)
-      continue;
-    pt2_addr = rv_tbf(pte, 31, 10, 12);
-    for (j = 0; j < (1 << 10); j++) {
-      rv_u32 pte2_addr = pt2_addr + (j << 2), pte2;
-      rv_u32 phys_lo_2, phys_hi_2;
-      res = cpu->bus_cb(cpu->user, pte2_addr, (rv_u8 *)&pte2, 0, 4);
-      if (res) {
-        printf("  %08X: fault\n", pte2_addr);
-        continue;
-      }
-      phys_lo_2 = rv_bf(pte2, 19, 10) << 12;
-      phys_hi_2 = phys_lo_2 + ((1 << 12) - 1);
-      if (!pte2)
-        continue;
-      printf("  (%03X) %08X %08X: %08X [%08X-%08X]\n", j, pte2_addr,
-             (i << 22) + (j << 12), pte2, phys_lo + phys_lo_2,
-             phys_hi + phys_hi_2);
-    }
-  }
-}
-
-int open_sock(void) {
-  int sock, new;
-  struct sockaddr_in addr;
-  int addrlen = sizeof(addr);
-  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    printf("\n Socket creation error \n");
-    return 1;
-  }
-
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = inet_addr("172.24.0.2");
-  addr.sin_port = htons(61444);
-
-  if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    perror("bind failed");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  if (listen(sock, 3) < 0) {
-    perror("listen");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  if ((new = accept(sock, (struct sockaddr *)&addr, (socklen_t *)&addrlen)) <
-      0) {
-    perror("accept");
-    shutdown(sock, SHUT_RDWR);
-    exit(EXIT_FAILURE);
-  }
-  return new;
-}
-
-rv_res uart_io(void *user, rv_u8 *byte, rv_u32 w) {
-  static int throttle = 0;
-  (void)(user);
-  if (w) {
-    write(STDOUT_FILENO, byte, 1);
-  } else {
-    int rv;
-    struct pollfd fd;
-    rv_u8 b;
-    ssize_t rvs;
-    memset(&fd, 0, sizeof(fd));
-    fd.events = POLLIN;
-    fd.fd = STDIN_FILENO;
-    if (throttle++ & 0xFF)
-      return RV_BAD;
-    rv = poll(&fd, 1, 0);
-    if (!rv || rv < 0 || !(fd.revents & POLLIN)) {
-      return RV_BAD;
-    }
-    rvs = read(STDIN_FILENO, &b, 1);
-    if (rvs != 1)
-      return RV_BAD;
-    *byte = b;
-  }
-  return RV_OK;
-}
-
-rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 w) {
-  mach *m = user;
-  static int throttle = 0;
-  if (!m->gdb_socket)
+rv_res uart_io(void *user, rv_u8 *byte, rv_u32 write) {
+  int ch;
+  if (write && *byte != '\r') /* curses bugs out if we echo '\r' */
+    echochar(*byte);
+  else if (!write && (ch = getch()) == ERR)
     return RV_BAD;
-  if (w) {
-    write(m->gdb_socket, byte, 1);
-  } else {
-    int rv;
-    struct pollfd fd;
-    rv_u8 b;
-    ssize_t rvs;
-    memset(&fd, 0, sizeof(fd));
-    fd.events = POLLIN;
-    fd.fd = m->gdb_socket;
-    if (throttle++ & 0xFF)
-      return RV_BAD;
-    rv = poll(&fd, 1, 0);
-    if (!rv || rv < 0 || !(fd.revents & POLLIN))
-      return RV_BAD;
-    rvs = read(m->gdb_socket, &b, 1);
-    if (rvs != 1)
-      return RV_BAD;
-    *byte = b;
-  }
+  else if (!write)
+    *byte = (rv_u8)ch;
   return RV_OK;
+}
+
+rv_res uart2_io(void *user, rv_u8 *byte, rv_u32 write) {
+  /* your very own uart, do whatever you want with it! */
+  return RV_BAD; /* stubbed for now */
+}
+
+void load(const char *path, rv_u8 *buf, rv_u32 max_size) {
+  FILE *f = fopen(path, "rb");
+  fread(buf, 1, max_size, f);
+  fclose(f);
+  printf("loaded %s\n", path);
 }
 
 int main(int argc, const char *const *argv) {
   rv cpu;
   mach mach;
-  rv_u32 dtb_addr = 0;
-  rv_u32 period = 0;
-  unsigned long instr_limit = 0;
-  if (argc >= 4)
-    sscanf(argv[3], "%lu", &instr_limit);
+  rv_u32 rtc_period = 0;
 
-  mach.recv_buf = 0;
-  mach.has_recv = 0;
-  (void)argc;
-  (void)argv;
+  /* initialize machine */
+  memset(&mach, 0, sizeof(mach));
   mach.ram = malloc(MACH_RAM_SIZE);
   mach.cpu = &cpu;
-  mach.gdb_socket = 0;
   memset(mach.ram, 0, MACH_RAM_SIZE);
-  {
-    long sz;
-    FILE *f = fopen(argv[1], "rb");
-    fseek(f, 0L, SEEK_END);
-    sz = ftell(f);
-    assert(sz > 0);
-    fseek(f, 0L, SEEK_SET);
-    fread(mach.ram, 1, (unsigned long)sz, f);
-    fclose(f);
-    printf("Loaded %li byte kernel image.\n", (unsigned long)sz);
-  }
-  {
-    long sz;
-    FILE *f = fopen(argv[2], "rb");
-    if (f) {
-      fseek(f, 0L, SEEK_END);
-      sz = ftell(f);
-      assert(sz > 0);
-      fseek(f, 0L, SEEK_SET);
-      dtb_addr = MACH_RAM_BASE + 0x2200000; /* DTB should be aligned */
-      fread(mach.ram + (dtb_addr - MACH_RAM_BASE), 1, (unsigned long)sz, f);
-      fclose(f);
-      printf("Loaded %li byte DTB.\n", (unsigned long)sz);
-    }
-  }
+
+  /* ncurses setup */
+  initscr();              /* initialize screen */
+  cbreak();               /* don't buffer input chars */
+  noecho();               /* don't echo input chars */
+  scrollok(stdscr, TRUE); /* allow the screen to autoscroll */
+  nodelay(stdscr, TRUE);  /* enable nonblocking input */
+
+  /* rv setup */
   rv_init(&cpu, &mach, &mach_bus);
   rv_plic_init(&mach.plic);
   rv_clint_init(&mach.clint, &cpu);
   rv_uart_init(&mach.uart, NULL, &uart_io);
   rv_uart_init(&mach.uart2, &mach, &uart2_io);
+
+  /* load kernel and dtb */
+  load(argv[1], mach.ram, MACH_RAM_SIZE);
+  load(argv[2], mach.ram + MACH_DTB_OFFSET, MACH_RAM_SIZE - MACH_DTB_OFFSET);
+
+  /* the bootloader expects the following three lines */
   cpu.pc = MACH_RAM_BASE;
-  /* https://lwn.net/Articles/935122/ */
-  cpu.r[10] /* a0 */ = 0;        /* hartid */
-  cpu.r[11] /* a1 */ = dtb_addr; /* dtb ptr */
-  {
-    do {
-      rv_u32 irq = 0;
-      if (!((period = (period + 1)) & 0xFFF))
-        if (!++cpu.csr.mtime)
-          cpu.csr.mtimeh++;
-      /*if (gres == RV_EBP)*/
-      /*if (ninstr >= 95756672 - 1000 && ninstr <= 95756672 + 100)*/
-      /*if (cpu.pc == 0xc0035f18 || cpu.pc == 0xc0033b8c ||)*/
-      /*if (cpu.pc == 0xc017bf26)
-        stl(&cpu);*/
-      /*if (ninstr == 143123149 || ninstr == 143129096)
-        stl(&cpu);*/
-      gres = rv_step(&cpu);
-      if (rv_uart_update(&mach.uart))
-        rv_plic_irq(&mach.plic, 1);
-      if (rv_uart_update(&mach.uart2))
-        rv_plic_irq(&mach.plic, 2);
-      irq = RV_CSI * rv_clint_msi(&mach.clint, 0) |
-            RV_CTI * rv_clint_mti(&mach.clint, 0) |
-            RV_CEI * rv_plic_mei(&mach.plic, 0);
-      rv_irq(&cpu, irq);
-    } while ((instr_limit == 0 || ++ninstr < instr_limit));
-    stl(&cpu);
-  }
-  return EXIT_FAILURE;
+  cpu.r[10] /* a0 */ = 0;                               /* hartid */
+  cpu.r[11] /* a1 */ = MACH_RAM_BASE + MACH_DTB_OFFSET; /* dtb ptr */
+  do {
+    rv_u32 irq = 0;
+    if (!(rtc_period = (rtc_period + 1) & 0xFFF))
+      if (!++cpu.csr.mtime)
+        cpu.csr.mtimeh++;
+    rv_step(&cpu);
+    if (rv_uart_update(&mach.uart))
+      rv_plic_irq(&mach.plic, 1);
+    if (rv_uart_update(&mach.uart2))
+      rv_plic_irq(&mach.plic, 2);
+    irq = RV_CSI * rv_clint_msi(&mach.clint, 0) |
+          RV_CTI * rv_clint_mti(&mach.clint, 0) |
+          RV_CEI * rv_plic_mei(&mach.plic, 0);
+    rv_irq(&cpu, irq);
+  } while (1);
+  return EXIT_SUCCESS; /* challenge: try and make this program return 0 */
 }

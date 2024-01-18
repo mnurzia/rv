@@ -5,7 +5,7 @@
 
 void rv_plic_init(rv_plic *plic) { memset(plic, 0, sizeof(*plic)); }
 
-rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 store,
+rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
                    rv_u32 width) {
   rv_u32 *reg = NULL, wmask = 0 - 1U, *data = (rv_u32 *)d;
   if (addr >= RV_PLIC_SIZE || width != 4)
@@ -26,16 +26,16 @@ rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 store,
            (addr & 0xFFF) == 4) /*R Interrupt Claim Register */ {
     rv_u32 context = (addr >> 12) - 0x200, en_off = context * RV_PLIC_NSRC / 32;
     reg = plic->claim + context;
-    if (!store && *reg < RV_PLIC_NSRC) {
+    if (!is_store && *reg < RV_PLIC_NSRC) {
       if (plic->pending[*reg / 32] & (1U << *reg % 32))
         plic->claiming[*reg / 32 + en_off] |=
             1U << *reg % 32; /* set claiming bit */
-    } else if (store && *data < RV_PLIC_NSRC) {
+    } else if (is_store && *data < RV_PLIC_NSRC) {
       plic->claiming[*data / 32 + en_off] &=
           ~(1U << *data % 32); /* unset claiming bit */
     }
   }
-  if (reg && !store)
+  if (reg && !is_store)
     *data = *reg;
   else if (reg)
     *reg = (*reg & ~wmask) | (*data & wmask);
