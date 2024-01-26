@@ -102,7 +102,9 @@ Click an instruction to see its implementation in `rv.c`.
 
 ### Spaghetti code!
 
-- `rv` tries to strike a good balance between conciseness and readability. Of course, being able to read this code at all requires intimate prior knowledge of the ISA encoding.
+- `rv` was written in a way that takes maximal advantage of RISCV's instruction orthogonality.
+- `rv` also tries to strike a good balance between conciseness and readability.
+- Of course, being able to read this code at all requires intimate prior knowledge of the ISA encoding.
 
 ### No switch statements!
 
