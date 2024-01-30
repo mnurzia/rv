@@ -7,7 +7,8 @@ void rv_plic_init(rv_plic *plic) { memset(plic, 0, sizeof(*plic)); }
 
 rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
                    rv_u32 width) {
-  rv_u32 *reg = NULL, wmask = 0 - 1U, *data = (rv_u32 *)d;
+  rv_u32 *reg = NULL, wmask = 0 - 1U, data;
+  rv_endcpy(d, (rv_u8 *)&data, 4, 0);
   if (addr >= RV_PLIC_SIZE || width != 4)
     return RV_BAD;
   else if (addr < RV_PLIC_NSRC * 4) /*R Interrupt Source Priority */
@@ -29,15 +30,16 @@ rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
       if (plic->pending[*reg / 32] & (1U << *reg % 32))
         plic->claiming[*reg / 32 + en_off] |=
             1U << *reg % 32; /* set claiming bit */
-    } else if (is_store && *data < RV_PLIC_NSRC) {
-      plic->claiming[*data / 32 + en_off] &=
-          ~(1U << *data % 32); /* unset claiming bit */
+    } else if (is_store && data < RV_PLIC_NSRC) {
+      plic->claiming[data / 32 + en_off] &=
+          ~(1U << data % 32); /* unset claiming bit */
     }
   }
   if (reg && !is_store)
-    *data = *reg;
+    data = *reg;
   else if (reg)
-    *reg = (*reg & ~wmask) | (*data & wmask);
+    *reg = (*reg & ~wmask) | (data & wmask);
+  rv_endcpy((rv_u8 *)&data, d, 4, 0);
   return RV_OK;
 }
 

@@ -89,11 +89,14 @@ typedef struct rv {
 /* Initialize CPU. You can call this again on `cpu` to reset it. */
 void rv_init(rv *cpu, void *user, rv_bus_cb bus_cb);
 
-/* Single-step CPU. Returns trap cause if trap occurred, else RV_TRAP_NONE */
+/* Single-step CPU. Returns trap cause if trap occurred, else `RV_TRAP_NONE` */
 rv_u32 rv_step(rv *cpu);
 
 /* Trigger interrupt(s). */
 void rv_irq(rv *cpu, rv_cause cause);
+
+/* Utility function to convert between host<->LE. */
+void rv_endcpy(rv_u8 *in, rv_u8 *out, rv_u32 width, rv_u32 is_store);
 
 #endif
 

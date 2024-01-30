@@ -198,6 +198,7 @@ static rv_u32 rv_vmm(rv *cpu, rv_u32 va, rv_u32 *pa, rv_access access) {
       pte_address = a + (rv_bf(va, 21 + 10 * i, 12 + 10 * i) << 2);
       if (cpu->bus_cb(cpu->user, pte_address, (rv_u8 *)&pte, 0, 4))
         return RV_BAD;
+      rv_endcpy((rv_u8 *)&pte, (rv_u8 *)&pte, 4, 0);
       if (!rv_b(pte, 0) || (!rv_b(pte, 1) && rv_b(pte, 2)))
         return RV_PAGEFAULT; /* pte.v == 0, or (pte.r == 0 and pte.w == 1) */
       if (rv_b(pte, 1) || rv_b(pte, 3))
@@ -394,23 +395,46 @@ static rv_u32 rvc(rv_u32 c) {
   }
 }
 
+void rv_endcpy(rv_u8 *in, rv_u8 *out, rv_u32 width, rv_u32 is_store) {
+  if (!is_store && width == 1) {
+    *out = in[0];
+  } else if (!is_store && width == 2) {
+    *((rv_u16 *)out) = (rv_u16)(in[0] << 0) | (rv_u16)(in[1] << 8);
+  } else if (!is_store && width == 4) {
+    *((rv_u32 *)out) = (rv_u32)(in[0] << 0) | (rv_u32)(in[1] << 8) |
+                       (rv_u32)(in[2] << 16) | (rv_u32)(in[3] << 24);
+  } else if (width == 1) {
+    out[0] = *in;
+  } else if (width == 2) {
+    out[0] = *(rv_u16 *)in >> 0 & 0xFF, out[1] = (*(rv_u16 *)in >> 8);
+  } else {
+    out[0] = *(rv_u32 *)in >> 0 & 0xFF, out[1] = *(rv_u32 *)in >> 8 & 0xFF,
+    out[2] = *(rv_u32 *)in >> 16 & 0xFF, out[3] = *(rv_u32 *)in >> 24 & 0xFF;
+  }
+}
+
 /* perform a bus access. access == RV_AW stores data. */
 static rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
                      rv_access access) {
   rv_u32 err, pa /* physical address */;
+  rv_u8 ledata[4];
+  rv_endcpy(data, ledata, width, 1);
   if (*va & (width - 1))
     return RV_BAD_ALIGN;
   if ((err = rv_vmm(cpu, *va, &pa, access)))
     return err; /* page or access fault */
   if (((pa + width - 1) ^ pa) & ~0xFFFU) /* page bound overrun */ {
     rv_u32 w0 /* load this many bytes from 1st page */ = 0x1000 - (*va & 0xFFF);
-    if ((err = cpu->bus_cb(cpu->user, pa, data, access == RV_AW, w0)))
+    if ((err = cpu->bus_cb(cpu->user, pa, ledata, access == RV_AW, w0)))
       return err;
     width -= w0, *va += w0, data += w0;
     if ((err = rv_vmm(cpu, *va, &pa, RV_AW)))
       return err;
   }
-  return cpu->bus_cb(cpu->user, pa, data, access == RV_AW, width);
+  if ((err = cpu->bus_cb(cpu->user, pa, ledata, access == RV_AW, width)))
+    return err;
+  rv_endcpy(ledata, data, width, 0);
+  return 0;
 }
 
 /* instruction fetch */

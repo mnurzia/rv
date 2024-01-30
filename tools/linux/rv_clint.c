@@ -9,7 +9,8 @@ void rv_clint_init(rv_clint *clint, rv *cpu) {
 
 rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
                     rv_u32 width) {
-  rv_u32 *reg, *data = (rv_u32 *)d;
+  rv_u32 *reg, data;
+  rv_endcpy(d, (rv_u8 *)&data, 4, 0);
   if (width != 4)
     return RV_BAD;
   if (addr == 0x0) /*R mswi */
@@ -24,7 +25,11 @@ rv_res rv_clint_bus(rv_clint *clint, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
     reg = &clint->cpu->csr.mtimeh;
   else
     return RV_BAD;
-  memcpy(is_store ? reg : data, is_store ? data : reg, 4);
+  if (is_store)
+    *reg = data;
+  else
+    data = *reg;
+  rv_endcpy((rv_u8 *)&data, d, 4, 1);
   return RV_OK;
 }
 

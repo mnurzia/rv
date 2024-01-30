@@ -31,46 +31,48 @@ void rv_uart_init(rv_uart *uart, void *user, rv_uart_cb cb) {
 
 rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
                    rv_u32 width) {
-  rv_u32 *data = (rv_u32 *)d;
+  rv_u32 data;
+  rv_endcpy(d, (rv_u8 *)&data, 4, 0);
   if (width != 4)
     return RV_BAD_ALIGN;
   if (addr == 0x00) { /*R txdata */
     if (is_store)
-      rv_uart_fifo_put(&uart->tx, (rv_u8)*data);
+      rv_uart_fifo_put(&uart->tx, (rv_u8)data);
     else
-      *data = (rv_u32)(uart->tx.size == RV_UART_FIFO_SIZE) << 31U;
+      data = (rv_u32)(uart->tx.size == RV_UART_FIFO_SIZE) << 31U;
   } else if (addr == 0x04) { /*R rxdata */
     if (!is_store)
-      *data = ((rv_u32)(!uart->rx.size) << 31U) | rv_uart_fifo_get(&uart->rx);
+      data = ((rv_u32)(!uart->rx.size) << 31U) | rv_uart_fifo_get(&uart->rx);
   } else if (addr == 0x08) { /*R txctrl */
     if (is_store)
-      uart->txctrl = *data & 0x00070003; /* no nstop supported */
+      uart->txctrl = data & 0x00070003; /* no nstop supported */
     else
-      *data = uart->txctrl;
+      data = uart->txctrl;
   } else if (addr == 0x0C) { /*R rxctrl */
     if (is_store)
-      uart->rxctrl = *data & 0x00070001;
+      uart->rxctrl = data & 0x00070001;
     else
-      *data = uart->rxctrl;
+      data = uart->rxctrl;
   } else if (addr == 0x10) { /*R ie */
     if (is_store)
-      uart->ie = *data & 3;
+      uart->ie = data & 3;
     else
-      *data = uart->ie;
+      data = uart->ie;
   } else if (addr == 0x14) { /*R ip */
     if (!is_store)
-      *data = uart->ip;
+      data = uart->ip;
   } else if (addr == 0x18) { /*R div */
     if (is_store)
-      uart->div = *data & 0xFFFF;
+      uart->div = data & 0xFFFF;
     else
-      *data = uart->div;
+      data = uart->div;
   } else if (addr == 0x1C) { /*R unused */
     if (!is_store)
-      *data = 0;
+      data = 0;
   } else {
     return RV_BAD;
   }
+  rv_endcpy((rv_u8 *)&data, d, 4, 1);
   return RV_OK;
 }
 
