@@ -85,18 +85,18 @@ To dump a binary starting at `0x80000000` that can be directly loaded by `rv` as
 
 Click an instruction to see its implementation in `rv.c`.
 
-- [`add       `](rv.c#L566)[`addi      `](rv.c#L566)[`amoadd.w  `](rv.c#L525)[`amoand.w  `](rv.c#L537)[`amomax.w  `](rv.c#L541)[`amomaxu.w `](rv.c#L545)[`amomin.w  `](rv.c#L539)[`amominu.w `](rv.c#L543)
-- [`amoor.w   `](rv.c#L535)[`amoswap.w `](rv.c#L527)[`amoxor.w  `](rv.c#L533)[`and       `](rv.c#L583)[`andi      `](rv.c#L583)[`auipc     `](rv.c#L673)[`beq       `](rv.c#L486)[`bge       `](rv.c#L489)
-- [`bgtu      `](rv.c#L491)[`blt       `](rv.c#L488)[`bltu      `](rv.c#L490)[`bne       `](rv.c#L487)[`c.add     `](rv.c#L385)[`c.addi    `](rv.c#L323)[`c.addi16sp`](rv.c#L330)[`c.and     `](rv.c#L351)
-- [`c.andi    `](rv.c#L342)[`c.beqz    `](rv.c#L361)[`c.bnez    `](rv.c#L363)[`c.ebreak  `](rv.c#L382)[`c.j       `](rv.c#L359)[`c.jal     `](rv.c#L325)[`c.jalr    `](rv.c#L379)[`c.jr      `](rv.c#L374)
-- [`c.li      `](rv.c#L327)[`c.lui     `](rv.c#L332)[`c.lw      `](rv.c#L315)[`c.lwsp    `](rv.c#L371)[`c.mv      `](rv.c#L376)[`c.or      `](rv.c#L349)[`c.slli    `](rv.c#L369)[`c.srai    `](rv.c#L340)
-- [`c.srli    `](rv.c#L338)[`c.sub     `](rv.c#L345)[`c.sw      `](rv.c#L317)[`c.swsp    `](rv.c#L387)[`c.xor     `](rv.c#L347)[`csrrc     `](rv.c#L626)[`csrrci    `](rv.c#L626)[`csrrs     `](rv.c#L620)
-- [`csrrsi    `](rv.c#L620)[`csrrw     `](rv.c#L611)[`csrrwi    `](rv.c#L611)[`div       `](rv.c#L597)[`divu      `](rv.c#L599)[`ebreak    `](rv.c#L662)[`ecall     `](rv.c#L659)[`fence     `](rv.c#L508)
-- [`fence.i   `](rv.c#L512)[`jal       `](rv.c#L554)[`jalr      `](rv.c#L501)[`lb        `](rv.c#L465)[`lbu       `](rv.c#L465)[`lh        `](rv.c#L465)[`lhu       `](rv.c#L465)[`lr.w      `](rv.c#L529)
-- [`lui       `](rv.c#L675)[`lw        `](rv.c#L465)[`mret      `](rv.c#L635)[`mul       `](rv.c#L587)[`mulh      `](rv.c#L587)[`mulhsu    `](rv.c#L587)[`mulhu     `](rv.c#L587)[`or        `](rv.c#L581)
-- [`ori       `](rv.c#L581)[`rem       `](rv.c#L601)[`remu      `](rv.c#L603)[`sb        `](rv.c#L477)[`sc.w      `](rv.c#L531)[`sfence.vma`](rv.c#L655)[`sh        `](rv.c#L477)[`sll       `](rv.c#L571)
-- [`slli      `](rv.c#L571)[`slt       `](rv.c#L573)[`slti      `](rv.c#L573)[`sltiu     `](rv.c#L575)[`sltu      `](rv.c#L575)[`sra       `](rv.c#L579)[`srai      `](rv.c#L579)[`sret      `](rv.c#L635)
-- [`srl       `](rv.c#L579)[`srli      `](rv.c#L579)[`sub       `](rv.c#L566)[`sw        `](rv.c#L477)[`wfi       `](rv.c#L652)[`xor       `](rv.c#L577)[`xori      `](rv.c#L577)
+- [`add       `](rv.c#L590)[`addi      `](rv.c#L590)[`amoadd.w  `](rv.c#L549)[`amoand.w  `](rv.c#L561)[`amomax.w  `](rv.c#L565)[`amomaxu.w `](rv.c#L569)[`amomin.w  `](rv.c#L563)[`amominu.w `](rv.c#L567)
+- [`amoor.w   `](rv.c#L559)[`amoswap.w `](rv.c#L551)[`amoxor.w  `](rv.c#L557)[`and       `](rv.c#L607)[`andi      `](rv.c#L607)[`auipc     `](rv.c#L697)[`beq       `](rv.c#L510)[`bge       `](rv.c#L513)
+- [`bgtu      `](rv.c#L515)[`blt       `](rv.c#L512)[`bltu      `](rv.c#L514)[`bne       `](rv.c#L511)[`c.add     `](rv.c#L386)[`c.addi    `](rv.c#L324)[`c.addi16sp`](rv.c#L331)[`c.and     `](rv.c#L352)
+- [`c.andi    `](rv.c#L343)[`c.beqz    `](rv.c#L362)[`c.bnez    `](rv.c#L364)[`c.ebreak  `](rv.c#L383)[`c.j       `](rv.c#L360)[`c.jal     `](rv.c#L326)[`c.jalr    `](rv.c#L380)[`c.jr      `](rv.c#L375)
+- [`c.li      `](rv.c#L328)[`c.lui     `](rv.c#L333)[`c.lw      `](rv.c#L316)[`c.lwsp    `](rv.c#L372)[`c.mv      `](rv.c#L377)[`c.or      `](rv.c#L350)[`c.slli    `](rv.c#L370)[`c.srai    `](rv.c#L341)
+- [`c.srli    `](rv.c#L339)[`c.sub     `](rv.c#L346)[`c.sw      `](rv.c#L318)[`c.swsp    `](rv.c#L388)[`c.xor     `](rv.c#L348)[`csrrc     `](rv.c#L650)[`csrrci    `](rv.c#L650)[`csrrs     `](rv.c#L644)
+- [`csrrsi    `](rv.c#L644)[`csrrw     `](rv.c#L635)[`csrrwi    `](rv.c#L635)[`div       `](rv.c#L621)[`divu      `](rv.c#L623)[`ebreak    `](rv.c#L686)[`ecall     `](rv.c#L683)[`fence     `](rv.c#L532)
+- [`fence.i   `](rv.c#L536)[`jal       `](rv.c#L578)[`jalr      `](rv.c#L525)[`lb        `](rv.c#L489)[`lbu       `](rv.c#L489)[`lh        `](rv.c#L489)[`lhu       `](rv.c#L489)[`lr.w      `](rv.c#L553)
+- [`lui       `](rv.c#L699)[`lw        `](rv.c#L489)[`mret      `](rv.c#L659)[`mul       `](rv.c#L611)[`mulh      `](rv.c#L611)[`mulhsu    `](rv.c#L611)[`mulhu     `](rv.c#L611)[`or        `](rv.c#L605)
+- [`ori       `](rv.c#L605)[`rem       `](rv.c#L625)[`remu      `](rv.c#L627)[`sb        `](rv.c#L501)[`sc.w      `](rv.c#L555)[`sfence.vma`](rv.c#L679)[`sh        `](rv.c#L501)[`sll       `](rv.c#L595)
+- [`slli      `](rv.c#L595)[`slt       `](rv.c#L597)[`slti      `](rv.c#L597)[`sltiu     `](rv.c#L599)[`sltu      `](rv.c#L599)[`sra       `](rv.c#L603)[`srai      `](rv.c#L603)[`sret      `](rv.c#L659)
+- [`srl       `](rv.c#L603)[`srli      `](rv.c#L603)[`sub       `](rv.c#L590)[`sw        `](rv.c#L501)[`wfi       `](rv.c#L676)[`xor       `](rv.c#L601)[`xori      `](rv.c#L601)
 
 ## FAQ
 
