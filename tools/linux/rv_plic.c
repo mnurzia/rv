@@ -8,7 +8,7 @@ void rv_plic_init(rv_plic *plic) { memset(plic, 0, sizeof(*plic)); }
 rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
                    rv_u32 width) {
   rv_u32 *reg = NULL, wmask = 0 - 1U, data;
-  rv_endcpy(d, (rv_u8 *)&data, 4, 0);
+  rv_endcvt(d, (rv_u8 *)&data, 4, 0);
   if (addr >= RV_PLIC_SIZE || width != 4)
     return RV_BAD;
   else if (addr < RV_PLIC_NSRC * 4) /*R Interrupt Source Priority */
@@ -39,7 +39,7 @@ rv_res rv_plic_bus(rv_plic *plic, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
     data = *reg;
   else if (reg)
     *reg = (*reg & ~wmask) | (data & wmask);
-  rv_endcpy((rv_u8 *)&data, d, 4, 0);
+  rv_endcvt((rv_u8 *)&data, d, 4, 0);
   return RV_OK;
 }
 

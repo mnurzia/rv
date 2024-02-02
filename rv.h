@@ -96,7 +96,7 @@ rv_u32 rv_step(rv *cpu);
 void rv_irq(rv *cpu, rv_cause cause);
 
 /* Utility function to convert between host<->LE. */
-void rv_endcpy(rv_u8 *in, rv_u8 *out, rv_u32 width, rv_u32 is_store);
+void rv_endcvt(rv_u8 *in, rv_u8 *out, rv_u32 width, rv_u32 is_store);
 
 #endif
 

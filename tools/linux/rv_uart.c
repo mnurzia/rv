@@ -32,7 +32,7 @@ void rv_uart_init(rv_uart *uart, void *user, rv_uart_cb cb) {
 rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
                    rv_u32 width) {
   rv_u32 data;
-  rv_endcpy(d, (rv_u8 *)&data, 4, 0);
+  rv_endcvt(d, (rv_u8 *)&data, 4, 0);
   if (width != 4)
     return RV_BAD_ALIGN;
   if (addr == 0x00) { /*R txdata */
@@ -72,7 +72,7 @@ rv_res rv_uart_bus(rv_uart *uart, rv_u32 addr, rv_u8 *d, rv_u32 is_store,
   } else {
     return RV_BAD;
   }
-  rv_endcpy((rv_u8 *)&data, d, 4, 1);
+  rv_endcvt((rv_u8 *)&data, d, 4, 1);
   return RV_OK;
 }
 
