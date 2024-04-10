@@ -6,7 +6,7 @@
 
 #include "rv.h"
 
-#define RV_PLIC_NSRC 256
+#define RV_PLIC_NSRC 32
 #define RV_PLIC_NCTX 1
 
 typedef struct rv_plic {
