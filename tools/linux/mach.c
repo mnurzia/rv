@@ -54,7 +54,7 @@ rv_res uart0_io(void *user, rv_u8 *byte, rv_u32 write) {
   (void)user;
   if (write && *byte != '\r') /* curses bugs out if we echo '\r' */
     echochar(*byte);
-  else if (!write && (!(thrott = (thrott + 1) & 0xFF) || (ch = getch()) == ERR))
+  else if (!write && ((thrott = (thrott + 1) & 0xFFF) || (ch = getch()) == ERR))
     return RV_BAD;
   else if (!write)
     *byte = (rv_u8)ch;
@@ -83,8 +83,9 @@ int main(int argc, const char *const *argv) {
   rv cpu;
   mach m;
   rv_u32 rtc_period = 0;
+  size_t ninst = 0, ctr = 0;
 
-  if (argc != 3) {
+  if (argc < 3) {
     printf("expected a firmware image and a binary device tree\n");
     exit(EXIT_FAILURE);
   }
@@ -105,6 +106,11 @@ int main(int argc, const char *const *argv) {
   /* load kernel and dtb */
   load(argv[1], m.ram, MACH_RAM_SIZE);
   load(argv[2], m.ram + MACH_DTB_OFFSET, MACH_RAM_SIZE - MACH_DTB_OFFSET);
+
+  /* try and figure out how many instructions to run */
+  if (argc == 4) {
+    ninst = (size_t)atol(argv[3]);
+  }
 
   /* ncurses setup */
   initscr();              /* initialize screen */
@@ -130,6 +136,8 @@ int main(int argc, const char *const *argv) {
           RV_CTI * rv_clint_mti(&m.clint0, 0) |
           RV_CEI * rv_plic_mei(&m.plic0, 0);
     rv_irq(&cpu, irq);
-  } while (1);
-  return EXIT_SUCCESS; /* challenge: try and make this program return 0 */
+  } while (!ninst || ctr++ < ninst);
+
+  endwin();
+  return EXIT_SUCCESS;
 }
