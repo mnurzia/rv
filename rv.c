@@ -410,7 +410,7 @@ static rv_u32 rv_bus(rv *cpu, rv_u32 *va, rv_u8 *data, rv_u32 width,
 /* instruction fetch */
 static rv_u32 rv_if(rv *cpu, rv_u32 *i, rv_u32 *tval) {
   rv_u32 err, page = (cpu->pc ^ (cpu->pc + 3)) & ~0xFFFU, pc = cpu->pc;
-  if (cpu->pc & 2 || page) { /* perform if in 2-byte fetches */
+  if (cpu->pc & 2 || page) { /* perform fetch in two 2-byte fetches */
     rv_u32 ia /* first half of instruction */ = 0, ib /* second half */ = 0;
     if ((err = rv_bus(cpu, &pc, (rv_u8 *)&ia, 2, RV_AX))) /* fetch 1st half */
       goto error;
@@ -421,21 +421,21 @@ static rv_u32 rv_if(rv *cpu, rv_u32 *i, rv_u32 *tval) {
   } else if ((err = rv_bus(cpu, &pc, (rv_u8 *)i, 4, RV_AX))) /* 4-byte fetch */
     goto error;
   cpu->next_pc = cpu->pc + rv_isz(*i);
-  *tval = *i; /* original inst as tval for accurate illegal instruction traps */
+  *tval = *i; /* tval is original inst for illegal instruction traps */
   if (rv_isz(*i) < 4)
     *i = rvc(*i & 0xFFFF);
   return RV_OK;
 error:
-  *tval = pc; /* pc as tval for instruction {page}fault traps */
+  *tval = pc; /* tval is pc for instruction {page}fault traps */
   return err;
 }
 
 /* service interrupts */
 static rv_u32 rv_service(rv *cpu) {
   rv_u32 iidx /* interrupt number */, d /* delegated privilege */;
-  for (iidx = 12; iidx > 0; iidx--) {
+  for (iidx = 12; iidx > 0; iidx--) { /* highest -> lowest priority */
     if (!(cpu->csr.mip & cpu->csr.mie & (1 << iidx)))
-      continue;
+      continue; /* interrupt not triggered or not enabled */
     d = (cpu->csr.mideleg & (1 << iidx)) ? RV_PSUPER : RV_PMACH;
     if (d == cpu->priv ? rv_b(cpu->csr.mstatus, d) : (d > cpu->priv))
       return rv_trap(cpu, 0x80000000U + iidx, cpu->pc);

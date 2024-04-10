@@ -3,7 +3,7 @@
 #ifndef MN_RV_H
 #define MN_RV_H
 
-#define RV_VERSION "1.0.0"
+#define RV_VERSION "1.0.1"
 
 /* Exception list. */
 #define RV_EIALIGN 0  /* Instruction alignment exception. */
