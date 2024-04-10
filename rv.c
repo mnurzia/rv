@@ -64,83 +64,54 @@ static rv_u32 rv_lr(rv *cpu, rv_u8 i) { return cpu->r[i]; }
 /* store register */
 static void rv_sr(rv *cpu, rv_u8 i, rv_u32 v) { cpu->r[i] = i ? v : 0; }
 
+#define RV_CSR(num, r, w, dst) /* check if we are accessing csr `num` */       \
+  y = ((csr == (num)) ? (rm = r, wm = w, &cpu->csr.dst) : y)
+
 /* csr bus access -- we model csrs as an internal memory bus */
 static rv_res rv_csr_bus(rv *cpu, rv_u32 csr, rv_u32 w, rv_u32 *io) {
-  rv_u32 *y /* the register */, wmask /* writable bits */ = -1U, rmask = -1U;
+  rv_u32 *y = NULL /* phys. register */, wm /* writable bits */ = -1U, rm = -1U;
   rv_u32 rw = rv_bf(csr, 11, 10), priv = rv_bf(csr, 9, 8);
   if ((w && rw == 3) || cpu->priv < priv ||
       (csr == 0x180 && cpu->priv == RV_PSUPER && rv_b(cpu->csr.mstatus, 20)))
-    return RV_BAD;    /* invalid access OR writing to satp with tvm=1 */
-  if (csr == 0x100) { /*C sstatus */
-    y = &cpu->csr.mstatus, wmask = rmask = 0x800DE762;
-  } else if (csr == 0x104) { /*C sie */
-    y = &cpu->csr.mie, wmask = 0x222, rmask = 0x222;
-  } else if (csr == 0x105) { /*C stvec */
-    y = &cpu->csr.stvec;
-  } else if (csr == 0x106) { /*C scounteren */
-    y = &cpu->csr.scounteren, wmask = 0;
-  } else if (csr == 0x140) { /*C sscratch */
-    y = &cpu->csr.sscratch;
-  } else if (csr == 0x141) { /*C sepc */
-    y = &cpu->csr.sepc;
-  } else if (csr == 0x142) { /*C scause */
-    y = &cpu->csr.scause;
-  } else if (csr == 0x143) { /*C stval */
-    y = &cpu->csr.stval;
-  } else if (csr == 0x144) { /*C sip */
-    y = &cpu->csr.mip, wmask = 0x222, rmask = 0x222;
-  } else if (csr == 0x180) { /*C satp */
-    y = &cpu->csr.satp;
-  } else if (csr == 0x300) { /*C mstatus */
-    y = &cpu->csr.mstatus, wmask = rmask = 0x807FFFEC;
-  } else if (csr == 0x301) { /*C misa */
-    y = &cpu->csr.misa, wmask = 0;
-  } else if (csr == 0x302) { /*C medeleg */
-    y = &cpu->csr.medeleg;
-  } else if (csr == 0x303) { /*C mideleg */
-    y = &cpu->csr.mideleg;
-  } else if (csr == 0x304) { /*C mie */
-    y = &cpu->csr.mie, wmask = 0xAAA;
-  } else if (csr == 0x305) { /*C mtvec */
-    y = &cpu->csr.mtvec;
-  } else if (csr == 0x306) { /*C mcounteren */
-    y = &cpu->csr.mcounteren, wmask = 0;
-  } else if (csr == 0x310) { /*C mstatush */
-    y = &cpu->csr.mstatush, wmask = rmask = 0x00000030;
-  } else if (csr == 0x340) { /*C mscratch */
-    y = &cpu->csr.mscratch;
-  } else if (csr == 0x341) { /*C mepc */
-    y = &cpu->csr.mepc;
-  } else if (csr == 0x342) { /*C mcause */
-    y = &cpu->csr.mcause;
-  } else if (csr == 0x343) { /*C mtval */
-    y = &cpu->csr.mtval, wmask = 0;
-  } else if (csr == 0x344) { /*C mip */
-    y = &cpu->csr.mip, wmask = 0xAAA;
-  } else if (csr == 0xC00) { /*C cycle */
-    y = &cpu->csr.cycle;
-  } else if (csr == 0xC01) { /*C time */
-    y = &cpu->csr.mtime;
-  } else if (csr == 0xC02) { /*C instret */
-    y = &cpu->csr.cycle;
-  } else if (csr == 0xC80) { /*C cycleh */
-    y = &cpu->csr.cycleh;
-  } else if (csr == 0xC81) { /*C timeh */
-    y = &cpu->csr.mtimeh;
-  } else if (csr == 0xC82) { /*C instreth */
-    y = &cpu->csr.cycleh;
-  } else if (csr == 0xF11) { /*C mvendorid */
-    y = &cpu->csr.mvendorid, wmask = 0;
-  } else if (csr == 0xF12) { /*C marchid */
-    y = &cpu->csr.marchid, wmask = 0;
-  } else if (csr == 0xF13) { /*C mimpid */
-    y = &cpu->csr.mimpid, wmask = 0;
-  } else if (csr == 0xF14) { /*C mhartid */
-    y = &cpu->csr.mhartid;
-  } else
-    return RV_BAD;
-  *io = w ? *io : (*y & rmask);                /* only read allowed bits */
-  *y = w ? (*y & ~wmask) | (*io & wmask) : *y; /* only write allowed bits  */
+    return RV_BAD; /* invalid access OR writing to satp with tvm=1 */
+  /*     id     read mask   write mask  phys reg         csr name */
+  RV_CSR(0x100, 0x800DE762, 0x800DE762, mstatus);    /*C sstatus */
+  RV_CSR(0x104, 0x00000222, 0x00000222, mie);        /*C sie */
+  RV_CSR(0x105, 0xFFFFFFFF, 0xFFFFFFFF, stvec);      /*C stvec */
+  RV_CSR(0x106, 0xFFFFFFFF, 0x00000000, scounteren); /*C scounteren */
+  RV_CSR(0x140, 0xFFFFFFFF, 0xFFFFFFFF, sscratch);   /*C sscratch */
+  RV_CSR(0x141, 0xFFFFFFFF, 0xFFFFFFFF, sepc);       /*C sepc */
+  RV_CSR(0x142, 0xFFFFFFFF, 0xFFFFFFFF, scause);     /*C scause */
+  RV_CSR(0x143, 0xFFFFFFFF, 0xFFFFFFFF, stval);      /*C stval */
+  RV_CSR(0x144, 0x00000222, 0x00000222, sip);        /*C sip */
+  RV_CSR(0x180, 0xFFFFFFFF, 0xFFFFFFFF, satp);       /*C satp */
+  RV_CSR(0x300, 0x807FFFEC, 0x807FFFEC, mstatus);    /*C mstatus */
+  RV_CSR(0x301, 0xFFFFFFFF, 0x00000000, misa);       /*C misa */
+  RV_CSR(0x302, 0xFFFFFFFF, 0xFFFFFFFF, medeleg);    /*C medeleg */
+  RV_CSR(0x303, 0xFFFFFFFF, 0xFFFFFFFF, mideleg);    /*C mideleg */
+  RV_CSR(0x304, 0xFFFFFFFF, 0x00000AAA, mie);        /*C mie */
+  RV_CSR(0x305, 0xFFFFFFFF, 0xFFFFFFFF, mtvec);      /*C mtvec */
+  RV_CSR(0x306, 0xFFFFFFFF, 0x00000000, mcounteren); /*C mcounteren */
+  RV_CSR(0x310, 0x00000030, 0x00000030, mstatush);   /*C mstatush */
+  RV_CSR(0x340, 0xFFFFFFFF, 0xFFFFFFFF, mscratch);   /*C mscratch */
+  RV_CSR(0x341, 0xFFFFFFFF, 0xFFFFFFFF, mepc);       /*C mepc */
+  RV_CSR(0x342, 0xFFFFFFFF, 0xFFFFFFFF, mcause);     /*C mcause */
+  RV_CSR(0x343, 0xFFFFFFFF, 0x00000000, mtval);      /*C mtval */
+  RV_CSR(0x344, 0xFFFFFFFF, 0x00000AAA, mip);        /*C mip */
+  RV_CSR(0xC00, 0xFFFFFFFF, 0xFFFFFFFF, cycle);      /*C cycle */
+  RV_CSR(0xC01, 0xFFFFFFFF, 0xFFFFFFFF, mtime);      /*C time */
+  RV_CSR(0xC02, 0xFFFFFFFF, 0xFFFFFFFF, cycle);      /*C instret */
+  RV_CSR(0xC80, 0xFFFFFFFF, 0xFFFFFFFF, cycleh);     /*C cycleh */
+  RV_CSR(0xC81, 0xFFFFFFFF, 0xFFFFFFFF, mtimeh);     /*C timeh */
+  RV_CSR(0xC82, 0xFFFFFFFF, 0xFFFFFFFF, cycleh);     /*C instreth */
+  RV_CSR(0xF11, 0xFFFFFFFF, 0x00000000, mvendorid);  /*C mvendorid */
+  RV_CSR(0xF12, 0xFFFFFFFF, 0x00000000, marchid);    /*C marchid */
+  RV_CSR(0xF13, 0xFFFFFFFF, 0x00000000, mimpid);     /*C mimpid */
+  RV_CSR(0xF14, 0xFFFFFFFF, 0xFFFFFFFF, mhartid);    /*C mhartid */
+  if (!y)
+    return RV_BAD;                       /* invalid csr */
+  *io = w ? *io : (*y & rm);             /* only read allowed bits */
+  *y = w ? (*y & ~wm) | (*io & wm) : *y; /* only write allowed bits  */
   return RV_OK;
 }
 
